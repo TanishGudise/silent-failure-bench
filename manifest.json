@@ -1,6 +1,6 @@
 {
  "files": {
-  "preregistration.md": "cf1fb44095c764bb4640f6d6fab0a1e8dcdcaec745acc7cd60b9be30ce74da65",
+  "preregistration.md": "3c630fdad9ac7795aa1b520ace2335bf6ce26cd62878f2cce7a7578ad0fbe5e8",
   "pyproject.toml": "d0ee5858bd9bfcabe39da3a2ac2fa170aacff06703a18a18d75df7d5c0f1196c",
   "scripts/gateway.sh": "fef2a9921af57143e0e9af0fbabb84858d6c2a3dbb406397eeb460bca48527b0",
   "scripts/harness.sh": "36be4516825092cd5de5acfde21c4f55a6d69a7709aa6a8bf6048dc38eab9a45",
@@ -22,5 +22,5 @@
   "sfb/tasks.py": "3ae70144af33eae87bed7ccb1e09b6ede268827160c9a471edff2be957eca922",
   "sfb/world.py": "0be7cf260e466cb9da5131f70c694009067bed61af1a3995ea618d36ecd19f27"
  },
- "manifest_hash": "1645d83d3399a1a65a84d932f8dd5cb4d3f65ce808c15259fcacd7c2dc636027"
+ "manifest_hash": "7bb157e5c8d41915b9990f15a69d8555b82b3294ee95e77ab58c8d701e70bdea"
 }
