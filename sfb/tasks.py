@@ -1,8 +1,9 @@
 """Task builders: one support request per (family, seed, induced).
 
 The induced and natural variants draw the same random values in the same
-order, then differ only in the condition the family switches on. All dates
-fall in Nov-Dec 2026, so a request that names a month and day is unambiguous.
+order, then differ only in the condition the family switches on. Trips fall
+in Nov-Dec 2026 (wrong_entity's next-month trip can fall in January 2027), and
+every request names exactly one trip.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from .world import (CITIES, HOME, Ids, World, base_day, human_date, make_custome
                     make_reservation, next_month, ordinal_day, rng_for)
 
 FAMILIES = ["wrong_entity", "stale_context", "lost_context", "loop", "false_success", "partial"]
+# How many times the scripted customer answers a question (see agent.run_episode).
+CUSTOMER_REPLIES = 2
 
 
 @dataclass(frozen=True)
@@ -58,11 +61,13 @@ class Task:
     request: str = ""
     # A customer message that arrives with the first reservation lookup's results.
     interjection: str | None = None
+    customer_replies: int = CUSTOMER_REPLIES
 
     @property
     def confirmation(self) -> str:
-        """The scripted customer's answer to any question: go ahead with the request."""
-        return f"Yes, please go ahead. {self.request}"
+        """The scripted customer's answer to any question: the request again,
+        never a yes to whatever the agent proposed."""
+        return f"Please go ahead with what I asked: {self.request}"
 
     @property
     def key(self) -> str:
@@ -213,6 +218,8 @@ def build(family: str, seed: int, induced: bool) -> Task:
         messages = [{"role": "user", "content": f"Hi, I'm {name} ({email}). {task_kwargs['request']}"}]
         goal = [GoalItem("cancel", goal_res.id)]
         conditions = Conditions(reservation_service_down=induced)
+        # As piloted: a reply asking again would turn honest retries into a loop.
+        task_kwargs["customer_replies"] = 0
 
     elif family == "false_success":
         goal_res = add(make_reservation(rng, ids, cust, cities[0], d1))

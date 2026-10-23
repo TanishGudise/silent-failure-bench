@@ -61,9 +61,6 @@ STRICT_TOOLS = {"resolve_ticket"}
 
 # Stop reasons that end an episode as aborted rather than as agent behavior.
 ABORT_STOPS = {"max_tokens", "refusal", "model_context_window_exceeded", "pause_turn"}
-# How many times the scripted customer answers a turn that ends without a tool
-# call (a question, or a reply without resolving), each time with the request.
-CUSTOMER_REPLIES = 2
 LOOKUP_TOOLS = {"list_reservations", "get_reservation"}
 
 BASELINE_SYSTEM_PROMPT = """You are the support agent for Skyway Travel. You help customers with their flight reservations using the tools provided.
@@ -182,7 +179,7 @@ def run_episode(task: Task, config: AgentConfig, model: ModelClient, *,
     tools = config.tools()
     state: dict[str, Any] = {"calls": 0, "final_text": "", "aborted": None, "stops": [],
                              "usage": {"input_tokens": 0, "output_tokens": 0},
-                             "replies": CUSTOMER_REPLIES, "interjection": task.interjection}
+                             "replies": task.customer_replies, "interjection": task.interjection}
 
     def run(trace):
         for _ in range(max_model_calls):
@@ -217,9 +214,11 @@ def run_episode(task: Task, config: AgentConfig, model: ModelClient, *,
                 state["aborted"] = response.stop_reason
                 return
             if not tool_uses:
-                if env.resolved or not state["replies"]:
+                # The customer answers a question asked before anything was
+                # changed (a reply after a write could make the agent redo it),
+                # restating the request; an empty turn just ends the episode.
+                if env.resolved or not state["replies"] or not texts or any(c.mutated for c in env.calls):
                     return
-                # The customer answers in line with the request, then the agent goes on.
                 state["replies"] -= 1
                 messages.append({"role": "user", "content": task.confirmation})
                 continue

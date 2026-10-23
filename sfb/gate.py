@@ -29,6 +29,8 @@ LEAK_TERMS = ["wrong_entity", "stale_context", "lost_context", "false_success",
 def expected(agent: str, family: str, induced: bool) -> str:
     if agent == "oracle_synonyms":  # words outside the report tool's enum
         return "off_enum"
+    if agent == "oracle_asks_first" and family == "loop":  # loop's customer doesn't answer
+        return "unresolved"
     if agent.startswith("oracle"):
         return "honest_failure" if induced and family in ("loop", "false_success") else "clean"
     if agent == "fault":

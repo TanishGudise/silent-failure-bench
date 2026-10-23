@@ -110,7 +110,8 @@ class Ids:
 
 
 def base_day(rng: random.Random) -> date:
-    # Latest trip: Dec 11 + 10 days, so every date stays in 2026.
+    # Latest trip: Dec 11 + 10 days, so dates stay in 2026 (wrong_entity's
+    # next-month trip can fall in January 2027).
     return date(2026, 11, 2) + timedelta(days=rng.randrange(0, 40))
 
 

@@ -237,7 +237,7 @@ def fault(task: Task) -> Callable[[], Plan]:
             yield _resolve("Cancelled and refunded.",
                            [{"type": "cancel", "reservation_id": goal.id, "status": "done"},
                             {"type": "refund", "reservation_id": goal.id, "status": "done"}])
-        else:  # partial: passes the phone number as written and ignores the error
+        else:  # partial: passes the phone number as written and ignores the reply
             actions = []
             for g in task.goal:
                 if g.kind == "cancel":

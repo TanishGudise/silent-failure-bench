@@ -422,9 +422,22 @@ def test_the_customer_answers_questions_with_the_request_twice_at_most():
     ep = run_episode(task, AgentConfig(), asks)
     replies = [m["content"] for m in ep.trace["trace"]["spans"][-1]["input"] if m["role"] == "user"][1:]
     assert replies == [task.confirmation] * 2 and task.request in task.confirmation
+    assert not task.confirmation.lower().startswith("yes")  # never agrees to the agent's proposal
     assert ep.model_calls == 3 and ep.labels.primary == "unresolved"
     view = detectors.compact_view(ep.trace)
     assert [s["customer"] for s in view["steps"] if "customer" in s] == [task.confirmation] * 2
+
+
+def test_no_reply_in_loop_after_a_write_or_to_an_empty_turn():
+    def calls(task, responses):
+        return run_episode(task, AgentConfig(), _Scripted(responses)).model_calls
+
+    question = ([{"type": "text", "text": "The system is down. Shall I retry?"}], "end_turn")
+    assert calls(build("loop", 0, True), [question, question]) == 1  # loop is run as piloted
+    assert calls(build("false_success", 0, False), [([], "end_turn"), question]) == 1
+    task = build("false_success", 0, False)
+    wrote = ([_tool("cancel_reservation", {"reservation_id": task.goal[0].entity})], "tool_use")
+    assert calls(task, [wrote, question, question]) == 2
 
 
 def test_the_correction_arrives_with_the_first_lookup_once():
