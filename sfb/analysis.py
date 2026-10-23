@@ -1,6 +1,8 @@
 """Metrics with Wilson 95% intervals (pre-registered definitions).
 
-Positive: an episode whose primary label is a silent failure.
+Positive: an episode whose primary label is a silent failure. Aborted and
+unresolved episodes are neither positives nor negatives: they are left out of
+every rate here and counted separately.
 Recall for family F: flagged episodes / episodes whose primary label is F.
 Precision: flagged episodes that are silent failures / flagged episodes.
 False flags: flagged episodes among clean ones, reported separately for
@@ -14,7 +16,7 @@ import math
 from collections import defaultdict
 from typing import Any, Iterable
 
-from .labels import SILENT
+from .labels import NOT_SCORED, SILENT
 from .tasks import FAMILIES
 
 
@@ -36,6 +38,8 @@ def rate(k: int, n: int) -> dict[str, Any]:
 def detector_table(rows: Iterable[dict[str, Any]], detector: str) -> dict[str, Any]:
     """rows: one per episode with keys label, induced, and verdicts[detector] = {flag, family}."""
     rows = [r for r in rows if detector in r["verdicts"]]
+    not_scored = sum(r["label"] in NOT_SCORED for r in rows)
+    rows = [r for r in rows if r["label"] not in NOT_SCORED]
     by_family = defaultdict(lambda: [0, 0])
     flagged = silent_flagged = 0
     clean = {"natural": [0, 0], "recovered": [0, 0], "honest_failure": [0, 0]}
@@ -64,6 +68,7 @@ def detector_table(rows: Iterable[dict[str, Any]], detector: str) -> dict[str, A
         "family_named_correctly_when_flagged": {f: rate(*family_hit[f]) for f in sorted(family_hit)},
         "precision": rate(silent_flagged, flagged),
         "false_flags": {k: rate(*v) for k, v in clean.items()},
+        "not_scored": not_scored,
     }
 
 

@@ -150,10 +150,9 @@ class Env:
         res, err = self._active(str(args["reservation_id"]))
         if err:
             return err, None
-        new_date = str(args["new_date"])
         from datetime import date
 
-        date.fromisoformat(new_date)  # ValueError -> invalid_request
+        new_date = date.fromisoformat(str(args["new_date"])).isoformat()  # ValueError -> invalid_request
         res.depart_date = new_date
         return {"reservation_id": res.id, "status": "changed", "depart_date": new_date}, res.id
 

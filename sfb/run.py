@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -19,7 +21,7 @@ from typing import Any, Iterable
 
 from . import detectors, fixloop, scripted
 from .agent import AgentConfig, run_episode
-from .analysis import detector_table, fmt, prevalence
+from .analysis import detector_table, fmt, prevalence, wilson
 from .gateway import PRICES
 from .tasks import FAMILIES, Task, build
 from .world import Customer, Refund, Reservation, World
@@ -66,37 +68,73 @@ def world_from(snapshot: dict[str, Any]) -> World:
     )
 
 
+class BudgetExhausted(SystemExit):
+    pass
+
+
+def preflight() -> str:
+    """Paid commands run only on the frozen code, after the gate passed on it."""
+    from .manifest import ROOT, compute
+
+    current = compute()
+    if os.environ.get("SFB_TEST_MODE") == "1":  # tests against the local fake API only
+        return current["manifest_hash"]
+    saved = json.loads((ROOT / "manifest.json").read_text())
+    if saved["manifest_hash"] != current["manifest_hash"]:
+        raise SystemExit("code or pre-registration changed since the freeze: amend, re-freeze, re-run the gate")
+    marker = RUNS / "gate_pass.json"
+    passed = json.loads(marker.read_text()) if marker.exists() else {}
+    if passed.get("manifest_hash") != current["manifest_hash"] or passed.get("seeds", 0) < 40:
+        raise SystemExit("run `python -m sfb.gate --seeds 40` on the frozen code first")
+    return current["manifest_hash"]
+
+
 def model_for(gateway: str, run: str, effort: str | None = None):
     from .llm import AnthropicModel
 
     return AnthropicModel(gateway, run=run, effort=effort)
 
 
+def _is_budget_refusal(exc: Exception) -> bool:
+    return "budget cap reached" in str(exc)
+
+
 def run_episodes(store: Store, jobs: Iterable[tuple[Task, AgentConfig, int]], gateway: str,
-                 run: str, workers: int) -> list[dict[str, Any]]:
+                 run: str, workers: int, manifest_hash: str,
+                 retry_errors: bool = False) -> list[dict[str, Any]]:
     model = model_for(gateway, run)
+    stop = threading.Event()
     todo = []
     for task, config, rep in jobs:
         key = f"{task.key}|{config.fingerprint}|{rep}"
-        if key not in store.rows:
+        row = store.rows.get(key)
+        if row is None or (retry_errors and "error" in row):
             todo.append((key, task, config))
 
     def one(item):
+        if stop.is_set():
+            return
         key, task, config = item
         try:
             episode = run_episode(task, config, model, max_model_calls=MAX_MODEL_CALLS,
                                   max_tokens=AGENT_MAX_TOKENS)
-        except Exception as exc:  # recorded and reported, never retried silently
-            store.add({"key": key, "error": f"{type(exc).__name__}: {exc}"[:500]})
+        except Exception as exc:
+            if _is_budget_refusal(exc):
+                stop.set()  # not the agent's doing: stop, store nothing, resume under a new cap
+                return
+            store.add({"key": key, "manifest": manifest_hash, "error": f"{type(exc).__name__}: {exc}"[:500]})
             return
-        store.add({"key": key, "record": episode.record(), "trace": episode.trace})
+        store.add({"key": key, "manifest": manifest_hash, "record": episode.record(), "trace": episode.trace})
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         list(pool.map(one, todo))
+    if stop.is_set():
+        raise BudgetExhausted("budget cap reached: stopped; completed episodes are saved")
     return [store.rows[f"{t.key}|{c.fingerprint}|{r}"] for t, c, r in jobs]
 
 
 def cmd_episodes(args) -> None:
+    manifest_hash = preflight()
     store = Store(RUNS / args.run / "episodes.jsonl")
     config = AgentConfig()
     from .manifest import compute
@@ -108,20 +146,22 @@ def cmd_episodes(args) -> None:
     variants = [v == "induced" for v in args.variants.split(",")]
     jobs = [(build(f, s, v), config, 0) for f in args.families.split(",")
             for s in parse_range(args.seeds) for v in variants]
-    rows = run_episodes(store, jobs, args.gateway, args.run, args.workers)
+    rows = run_episodes(store, jobs, args.gateway, args.run, args.workers, manifest_hash, args.retry_errors)
     errors = [r for r in rows if "error" in r]
     print(f"{len(rows)} episodes, {len(errors)} errors")
 
 
 def cmd_detect(args) -> None:
+    wanted = args.detectors.split(",")
+    manifest_hash = preflight() if {"d1", "d1b"} & set(wanted) else ""
     episodes = Store(RUNS / args.run / "episodes.jsonl")
     out = Store(RUNS / args.run / f"detect.jsonl")
     instructions = json.loads((RUNS / args.run / "config.json").read_text())["system_prompt"]
-    wanted = args.detectors.split(",")
-    model = model_for(args.gateway, args.run + "-detect") if {"d1", "d1b"} & set(wanted) else None
+    models = {name: model_for(args.gateway, f"{args.run}-{name}") for name in ("d1", "d1b") if name in wanted}
+    stop = threading.Event()
 
     def one(row):
-        if "error" in row:
+        if "error" in row or stop.is_set():
             return
         for name in wanted:
             key = f"{row['key']}|{name}"
@@ -135,27 +175,49 @@ def cmd_detect(args) -> None:
             else:
                 system, user = (detectors.judge_prompt if name == "d1" else detectors.monitor_prompt)(payload, instructions)
                 schema = detectors.JUDGE_SCHEMA if name == "d1" else detectors.MONITOR_SCHEMA
-                answer, usage, stop = model.complete_json(system=system, user=user, schema=schema,
-                                                          max_tokens=JUDGE_MAX_TOKENS)
+                try:
+                    answer, usage, stop_reason = models[name].complete_json(
+                        system=system, user=user, schema=schema, max_tokens=JUDGE_MAX_TOKENS)
+                except Exception as exc:
+                    if _is_budget_refusal(exc):
+                        stop.set()
+                        return
+                    out.add({"key": key, "episode": row["key"], "detector": name, "manifest": manifest_hash,
+                             "error": f"{type(exc).__name__}: {exc}"[:300]})
+                    continue
                 if answer is None:
-                    out.add({"key": key, "episode": row["key"], "detector": name, "error": stop, "usage": usage})
+                    out.add({"key": key, "episode": row["key"], "detector": name, "manifest": manifest_hash,
+                             "error": stop_reason, "usage": usage})
                     continue
                 v = (detectors.parse_judge if name == "d1" else detectors.parse_monitors)(answer)
-            out.add({"key": key, "episode": row["key"], "detector": name,
+            out.add({"key": key, "episode": row["key"], "detector": name, "manifest": manifest_hash,
                      "flag": v.flag, "family": v.family, "reasons": v.reasons, "usage": usage})
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         list(pool.map(one, list(episodes.rows.values())))
+    if stop.is_set():
+        raise BudgetExhausted("budget cap reached: stopped; completed verdicts are saved")
     print(f"{len(out.rows)} detector results")
 
 
 def cmd_fixloop(args) -> None:
+    manifest_hash = preflight()
     bench = Store(RUNS / args.run / "episodes.jsonl")
     store = Store(RUNS / args.run / "fixloop_episodes.jsonl")
     fixes = Store(RUNS / args.run / "fixes.jsonl")
     baseline = AgentConfig()
     fixer = model_for(args.gateway, args.run + "-fixer")
-    results = []
+    tag = args.run + "-fixloop"
+    summary_path = RUNS / args.run / "fixloop_summary.json"
+    previous = json.loads(summary_path.read_text())["fixes"] if summary_path.exists() else []
+    results: dict[str, fixloop.FixResult] = {
+        r["trigger"]: fixloop.FixResult(**{k: (tuple(v) if isinstance(v, list) and k.startswith(("gate_", "outcome_")) else v)
+                                           for k, v in r.items() if k in fixloop.FixResult.__dataclass_fields__})
+        for r in previous}
+
+    def label_of(row: dict[str, Any]) -> str:
+        return row["record"]["label"] if "record" in row else "error"
+
     for family in args.families.split(","):
         triggers = sorted((r for r in bench.rows.values() if "record" in r
                            and r["record"]["family"] == family and r["record"]["induced"]
@@ -166,48 +228,66 @@ def cmd_fixloop(args) -> None:
             continue
         outcome_heldout = range(0) if args.gate_only else fixloop.OUTCOME_HELDOUT
         outcome_regression = range(0) if args.gate_only else fixloop.OUTCOME_REGRESSION
-        base_jobs = [(t, baseline, 0) for t in
-                     fixloop.heldout_tasks(family, fixloop.GATE_HELDOUT)
-                     + fixloop.heldout_tasks(family, outcome_heldout)
-                     + fixloop.regression_tasks(family, fixloop.GATE_REGRESSION)
-                     + fixloop.regression_tasks(family, outcome_regression)]
-        base_rows = run_episodes(store, base_jobs, args.gateway, args.run + "-fixloop", args.workers)
+        sets = [fixloop.heldout_tasks(family, fixloop.GATE_HELDOUT),
+                fixloop.heldout_tasks(family, outcome_heldout),
+                fixloop.regression_tasks(family, fixloop.GATE_REGRESSION),
+                fixloop.regression_tasks(family, outcome_regression)]
+        base_rows = run_episodes(store, [(t, baseline, 0) for tasks in sets for t in tasks],
+                                 args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
         for trig in triggers:
             key = f"fix|{trig['key']}"
             if key not in fixes.rows:
                 system, user = fixloop.fixer_prompt(baseline, family, trig["trace"])
-                answer, usage, stop = fixer.complete_json(system=system, user=user, schema=fixloop.FIXER_SCHEMA,
-                                                          max_tokens=FIXER_MAX_TOKENS)
-                fixes.add({"key": key, "family": family, "answer": answer, "usage": usage, "stop": stop})
+                try:
+                    answer, usage, stop = fixer.complete_json(system=system, user=user, schema=fixloop.FIXER_SCHEMA,
+                                                              max_tokens=FIXER_MAX_TOKENS)
+                except Exception as exc:
+                    if _is_budget_refusal(exc):
+                        raise BudgetExhausted("budget cap reached at the fixer call") from exc
+                    answer, usage, stop = None, {}, f"{type(exc).__name__}: {exc}"[:300]
+                fixes.add({"key": key, "family": family, "manifest": manifest_hash, "answer": answer,
+                           "usage": usage, "stop": stop})
             answer = fixes.rows[key]["answer"]
             if not answer:
-                print(f"{key}: fixer gave no usable answer")
+                print(f"{key}: fixer gave no usable answer ({fixes.rows[key]['stop']})")
                 continue
             fixed = fixloop.apply_fix(baseline, answer)
-            seed = trig["record"]["seed"]
-            fix_jobs = ([(build(family, seed, True), fixed, rep) for rep in range(fixloop.REPLAYS)]
-                        + [(t, fixed, 0) for t, _, _ in base_jobs])
-            fix_rows = run_episodes(store, fix_jobs, args.gateway, args.run + "-fixloop", args.workers)
-            labels = [r.get("record", {}).get("label", "error") for r in fix_rows]
-            base_labels = [r.get("record", {}).get("label", "error") for r in base_rows]
-            fails = lambda ls: sum(fixloop.failed(x) or x == "error" for x in ls)
-            n_rep, g_h, o_h, g_r = fixloop.REPLAYS, len(fixloop.GATE_HELDOUT), len(outcome_heldout), len(fixloop.GATE_REGRESSION)
-            fix_rest, base_rest = labels[n_rep:], base_labels
-            cut = [0, g_h, g_h + o_h, g_h + o_h + g_r, len(base_rest)]
-            seg = lambda ls, i: ls[cut[i]:cut[i + 1]]
+            trigger_task = build(family, trig["record"]["seed"], True)
+            # Fresh re-runs of the trigger: the fixed config, and the unchanged
+            # config (reps 1-3; rep 0 is the bench episode that triggered).
+            replays = run_episodes(store, [(trigger_task, fixed, rep) for rep in range(fixloop.REPLAYS)],
+                                   args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+            nulls = run_episodes(store, [(trigger_task, baseline, rep) for rep in range(1, fixloop.REPLAYS + 1)],
+                                 args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+            fix_rows = run_episodes(store, [(t, fixed, 0) for tasks in sets for t in tasks],
+                                    args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+            cuts = [0]
+            for tasks in sets:
+                cuts.append(cuts[-1] + len(tasks))
+
+            def fails(rows, i):
+                return sum(fixloop.failed(label_of(r)) for r in rows[cuts[i]:cuts[i + 1]])
+
+            errors = sum("error" in r for r in replays + nulls + fix_rows + base_rows)
             result = fixloop.FixResult(
-                family=family, trigger=trig["key"], replay_labels=labels[:n_rep],
-                gate_heldout=(fails(seg(base_rest, 0)), fails(seg(fix_rest, 0))),
-                outcome_heldout=(fails(seg(base_rest, 1)), fails(seg(fix_rest, 1))),
-                gate_regression=(fails(seg(base_rest, 2)), fails(seg(fix_rest, 2))),
-                outcome_regression=(fails(seg(base_rest, 3)), fails(seg(fix_rest, 3))),
+                family=family, trigger=trig["key"],
+                replay_labels=[label_of(r) for r in replays],
+                null_replay_labels=[label_of(r) for r in nulls],
+                gate_heldout=(fails(base_rows, 0), fails(fix_rows, 0)),
+                outcome_heldout=(fails(base_rows, 1), fails(fix_rows, 1)),
+                gate_regression=(fails(base_rows, 2), fails(fix_rows, 2)),
+                outcome_regression=(fails(base_rows, 3), fails(fix_rows, 3)),
+                errors=errors, gate_only=args.gate_only,
             )
-            results.append(result)
+            results[trig["key"]] = result
             print(json.dumps(result.record()))
-    (RUNS / args.run / "fixloop_summary.json").write_text(json.dumps({
-        "fixes": [r.record() for r in results],
-        "replay_false_pass": fixloop.replay_false_pass(results),
-        "gates": fixloop.gate_table(results),
+    final = list(results.values())
+    bad, passing = fixloop.replay_false_pass(final)
+    lo, hi = wilson(bad, passing)
+    summary_path.write_text(json.dumps({
+        "fixes": [r.record() for r in final],
+        "replay_false_pass": {"bad": bad, "replay_passing_scored": passing, "wilson95": [lo, hi]},
+        "gates": fixloop.gate_table(final),
     }, indent=1))
 
 
@@ -229,15 +309,54 @@ def load_rows(run: str) -> list[dict[str, Any]]:
     return rows
 
 
+def detector_errors(run: str) -> dict[str, int]:
+    path = RUNS / run / "detect.jsonl"
+    counts: dict[str, int] = {}
+    if path.exists():
+        for row in Store(path).rows.values():
+            if "error" in row:
+                counts[row["detector"]] = counts.get(row["detector"], 0) + 1
+    return counts
+
+
+def cost_per_1k(ledger: Path, run: str, detector: str, traces: int) -> float | None:
+    if not ledger.exists() or not traces:
+        return None
+    spent = sum(e["usd"] for e in map(json.loads, ledger.read_text().splitlines())
+                if e.get("run") == f"{run}-{detector}")
+    return round(spent / traces * 1000, 4)
+
+
+def cascade(rows: list[dict[str, Any]], judge: str) -> list[dict[str, Any]]:
+    """D2 or D3 first; the judge only on traces neither flagged."""
+    out = []
+    for r in rows:
+        v = r["verdicts"]
+        if not all(k in v for k in ("d2", "d3", judge)):
+            continue
+        cheap = v["d2"]["flag"] or v["d3"]["flag"]
+        flag = cheap or v[judge]["flag"]
+        family = (v["d2"] if v["d2"]["flag"] else v["d3"] if v["d3"]["flag"] else v[judge]).get("family")
+        out.append({**r, "verdicts": {"cascade": {"flag": flag, "family": family, "judged": not cheap}}})
+    return out
+
+
 def cmd_report(args) -> None:
     rows = load_rows(args.run)
     print(json.dumps(prevalence(rows), indent=1))
+    print("detector errors (excluded from the tables below):", detector_errors(args.run))
     for slice_name, sub in (("induced", [r for r in rows if r["induced"]]),
                             ("natural", [r for r in rows if not r["induced"]])):
-        for det in ("d1", "d1b", "d2", "d3"):
-            table = detector_table(sub, det)
-            if not any(table["recall"].values()) and not table["false_flags"]["natural"]["n"] \
-                    and not table["false_flags"]["recovered"]["n"]:
+        tables = {det: detector_table(sub, det) for det in ("d1", "d1b", "d2", "d3")}
+        for judge in ("d1", "d1b"):
+            casc = cascade(sub, judge)
+            if casc:
+                tables[f"d2+d3 then {judge}"] = detector_table(casc, "cascade")
+                share = sum(r["verdicts"]["cascade"]["judged"] for r in casc) / len(casc)
+                tables[f"d2+d3 then {judge}"]["judge_calls_share"] = round(share, 3)
+        for det, table in tables.items():
+            if not any(t["n"] for t in table["recall"].values()) and not any(
+                    t["n"] for t in table["false_flags"].values()):
                 continue
             print(f"\n[{slice_name}] {det}")
             for fam, r in table["recall"].items():
@@ -245,6 +364,12 @@ def cmd_report(args) -> None:
             print(f"  precision            {fmt(table['precision'])}")
             for k, r in table["false_flags"].items():
                 print(f"  false flags {k:9s} {fmt(r)}")
+            if "judge_calls_share" in table:
+                print(f"  judge calls needed   {table['judge_calls_share']:.0%} of traces")
+    if args.ledger:
+        traces = len(rows)
+        for det in ("d1", "d1b"):
+            print(f"{det}: ${cost_per_1k(Path(args.ledger), args.run, det, traces)} per 1,000 traces")
 
 
 def _lookups(task: Task, k: int):
@@ -307,6 +432,7 @@ def main() -> None:
     p.add_argument("--seeds", default="0-4")
     p.add_argument("--variants", default="induced,natural")
     p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--retry-errors", action="store_true", help="re-run episodes that errored (logged)")
     p.set_defaults(fn=cmd_episodes)
     p = sub.add_parser("detect")
     p.add_argument("--run", required=True)
@@ -320,10 +446,12 @@ def main() -> None:
     p.add_argument("--families", default=",".join(FAMILIES))
     p.add_argument("--per-family", type=int, default=2)
     p.add_argument("--gate-only", action="store_true", help="pilot: replay and gate sets, no outcome sets")
+    p.add_argument("--retry-errors", action="store_true", help="re-run episodes that errored (logged)")
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(fn=cmd_fixloop)
     p = sub.add_parser("report")
     p.add_argument("--run", required=True)
+    p.add_argument("--ledger", default="", help="gateway ledger for cost per 1,000 traces")
     p.set_defaults(fn=cmd_report)
     p = sub.add_parser("sizes")
     p.add_argument("--max-turns", type=int, default=12)

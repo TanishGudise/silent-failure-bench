@@ -5,7 +5,12 @@ process allowed to reach the upstream API. Before forwarding it reserves the
 request's worst case (every request byte counted as an input token, plus
 max_tokens of output) and refuses any request that could push spend past the
 cap. After the response it books the real cost from `usage` and releases the
-reservation. The key is read from a gitignored .env and never logged.
+reservation. If the upstream connection fails after the request was sent, it
+books the full reservation, since the call may have been billed. Error replies
+without usage (429, 5xx) aren't billed; those are retried here, at most twice,
+and every attempt is written to the ledger. The key is read from a gitignored
+.env and never logged. Callers must present the gateway token, and only the
+request fields the harness uses are forwarded.
 """
 
 from __future__ import annotations
@@ -29,6 +34,11 @@ PRICES = {
 }
 LONG_PROMPT_TOKENS = 100_000
 CACHE_WRITE, CACHE_READ = 1.25, 0.10
+ALLOWED_FIELDS = {"model", "max_tokens", "system", "messages", "tools", "output_config",
+                  "tool_choice", "stop_sequences", "metadata"}
+RETRY_STATUSES = {429, 500, 502, 503, 529}
+RETRY_DELAYS = (1.0, 4.0)
+UPSTREAM_TIMEOUT = 300
 
 
 def read_env_key(path: Path) -> str:
@@ -88,16 +98,25 @@ class Meter:
         with self.lock:
             self.reserved -= reserved
             self.spent += entry["usd"]
-            self.ledger.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.ledger, "a") as handle:
-                fcntl.flock(handle, fcntl.LOCK_EX)
-                handle.write(json.dumps(entry) + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-                fcntl.flock(handle, fcntl.LOCK_UN)
+            self._append(entry)
+
+    def book(self, entry: dict) -> None:
+        """Record an attempt without releasing the reservation (retries)."""
+        with self.lock:
+            self.spent += entry["usd"]
+            self._append(entry)
+
+    def _append(self, entry: dict) -> None:
+        self.ledger.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.ledger, "a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            handle.write(json.dumps(entry) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def make_handler(meter: Meter, key: str, upstream: str):
+def make_handler(meter: Meter, key: str, upstream: str, token: str):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args) -> None:
             pass
@@ -115,6 +134,12 @@ def make_handler(meter: Meter, key: str, upstream: str):
         def do_POST(self) -> None:
             if self.path.split("?")[0] != "/v1/messages":
                 return self._error(404, "not_found_error", "only /v1/messages is proxied")
+            presented = {self.headers.get("x-api-key", ""),
+                         self.headers.get("authorization", "").removeprefix("Bearer ").strip()}
+            if token not in presented:
+                return self._error(401, "authentication_error", "gateway token required")
+            if self.headers.get("anthropic-beta"):
+                return self._error(400, "invalid_request_error", "beta headers are not forwarded")
             body = self.rfile.read(int(self.headers.get("content-length", 0)))
             try:
                 request = json.loads(body)
@@ -122,46 +147,54 @@ def make_handler(meter: Meter, key: str, upstream: str):
                 max_tokens = int(request["max_tokens"])
             except (ValueError, KeyError):
                 return self._error(400, "invalid_request_error", "unreadable request")
-            if model not in PRICES or request.get("stream"):
-                return self._error(400, "invalid_request_error", f"model {model} or streaming not allowed")
+            extra = set(request) - ALLOWED_FIELDS
+            if model not in PRICES or extra:
+                return self._error(400, "invalid_request_error", f"model {model} or fields {sorted(extra)} not allowed")
             bound = worst_case_usd(model, body, max_tokens)
             if not meter.reserve(bound):
                 return self._error(400, "invalid_request_error",
                                    f"budget cap reached (spent ${meter.spent:.4f} of ${meter.cap_usd:.2f})")
             headers = {"content-type": "application/json", "x-api-key": key,
                        "anthropic-version": self.headers.get("anthropic-version", "2023-06-01")}
-            if self.headers.get("anthropic-beta"):
-                headers["anthropic-beta"] = self.headers["anthropic-beta"]
-            started = time.time()
-            usage: dict = {}
-            status = 0
-            try:
-                req = urllib.request.Request(upstream + "/v1/messages", data=body, headers=headers, method="POST")
+            run = self.headers.get("x-sfb-run", "")
+            for attempt in range(len(RETRY_DELAYS) + 1):
+                started = time.time()
                 try:
-                    with urllib.request.urlopen(req, timeout=300) as resp:
-                        status, payload = resp.status, resp.read()
-                except urllib.error.HTTPError as err:
-                    status, payload = err.code, err.read()
+                    req = urllib.request.Request(upstream + "/v1/messages", data=body, headers=headers, method="POST")
+                    try:
+                        with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT) as resp:
+                            status, payload = resp.status, resp.read()
+                    except urllib.error.HTTPError as err:
+                        status, payload = err.code, err.read()
+                except OSError as exc:
+                    # The request may have reached the API and been billed.
+                    meter.settle(bound, {"ts": round(started, 3), "run": run, "model": model, "status": 0,
+                                         "usage": {}, "usd": bound, "note": f"upstream failed: {type(exc).__name__}"})
+                    return self._error(502, "api_error", f"upstream failed: {type(exc).__name__}")
                 try:
                     usage = json.loads(payload).get("usage") or {}
                 except ValueError:
                     usage = {}
-                self._reply(status, payload)
-            except OSError as exc:
-                self._error(502, "api_error", f"upstream unreachable: {type(exc).__name__}")
-            finally:
-                meter.settle(bound, {
-                    "ts": round(started, 3), "run": self.headers.get("x-sfb-run", ""), "model": model,
-                    "status": status, "usage": usage,
-                    "usd": actual_usd(model, usage) if usage else 0.0,
-                })
+                last = attempt == len(RETRY_DELAYS)
+                retry = status in RETRY_STATUSES and not usage and not last
+                if retry:
+                    meter.book({"ts": round(started, 3), "run": run, "model": model, "status": status,
+                                "usage": {}, "usd": 0.0, "note": "unbilled error reply; retrying"})
+                    time.sleep(RETRY_DELAYS[attempt])
+                    continue
+                meter.settle(bound, {"ts": round(started, 3), "run": run, "model": model, "status": status,
+                                     "usage": usage, "usd": actual_usd(model, usage) if usage else 0.0})
+                return self._reply(status, payload)
 
     return Handler
 
 
-def serve(env_path: Path, ledger: Path, cap_usd: float, port: int, upstream: str) -> ThreadingHTTPServer:
+def serve(env_path: Path, ledger: Path, cap_usd: float, port: int, upstream: str,
+          token: str) -> ThreadingHTTPServer:
+    if len(token) < 16:
+        raise SystemExit("set SFB_GATEWAY_TOKEN to a random string of 16+ characters")
     meter = Meter(ledger, cap_usd)
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(meter, read_env_key(env_path), upstream))
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(meter, read_env_key(env_path), upstream, token))
     server.meter = meter  # type: ignore[attr-defined]
     return server
 
@@ -174,7 +207,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--upstream", default="https://api.anthropic.com")
     args = parser.parse_args()
-    server = serve(args.env, args.ledger, args.cap, args.port, args.upstream)
+    server = serve(args.env, args.ledger, args.cap, args.port, args.upstream,
+                   os.environ.get("SFB_GATEWAY_TOKEN", ""))
     print(f"gateway on 127.0.0.1:{args.port}, spent ${server.meter.spent:.4f} of ${args.cap:.2f}", flush=True)
     server.serve_forever()
 

@@ -6,12 +6,12 @@ A silent failure is one the user wouldn't learn about from the agent's reply: it
 
 ## How it works
 
-- **Environment.** A seeded support desk for a fictional airline: customers, reservations, refunds and eight tools. A scripted customer opens each conversation, so every episode is reproducible.
-- **Failures are induced, labels are exact.** Natural silent failures from a capable model are rare, so each failure family has a condition that makes it likely (a near-duplicate reservation, a corrected date, a tool that queues instead of acting, and so on). Every episode is then labeled from the final state of the world, the environment's own call log and the agent's structured report of what it did. No model is involved in labeling. An episode where the agent meets the condition and recovers is labeled clean.
+- **Environment.** A seeded support desk for a fictional airline: customers, reservations, refunds and eight tools. A scripted customer opens each conversation, so every task is reproducible (model replies still vary from run to run).
+- **Failures are induced, labels are exact.** Natural silent failures from a capable model are rare, so each failure family has a condition that makes it likely (a near-duplicate reservation, a corrected date, a tool that queues instead of acting, and so on). Every episode is then labeled from the final state of the world, the environment's own call log and the ticket's action list, which is what the customer sees. No model is involved in labeling. An episode where the agent meets the condition and recovers is labeled clean.
 - **Natural slice.** The same tasks and seeds are also run without the condition, and reported separately.
 - **Traces.** Episodes are traced with a vendor tracing SDK (MIT, pinned in `pyproject.toml`) and captured locally through its transport hook, so detectors see production-format traces. Nothing is sent anywhere.
 - **Detectors.** An LLM judge, a set of LLM behavior checks, deterministic trace rules, and a probe that re-reads the records the agent claims to have changed.
-- **Fix loop.** A fixer proposes a prompt or tool-description change from one triggering trace. The fix is replayed on that trace and then checked on held-out seeds of the same failure and on other tasks, paired against the unchanged agent.
+- **Fix loop.** A fixer proposes a prompt or tool-description change from one triggering trace. The triggering task is re-run with the fix, then the fix is checked on held-out seeds of the same failure and on other tasks, paired against the unchanged agent. A null arm re-runs the triggering task with no change, to show how often an empty fix would pass the same gates.
 
 The design, metrics, hypotheses, budget and stop rules are in [preregistration.md](preregistration.md), frozen before any paid run. `manifest.json` hashes it together with the code that defines the measurement.
 
@@ -24,7 +24,7 @@ uv venv --python 3.11 .venv && uv pip install --python .venv/bin/python -e '.[de
 .venv/bin/python -m sfb.run sizes       # $0: trace size against number of model calls
 ```
 
-Paid runs go through a local gateway that holds the API key (from a gitignored `.env`), meters spend and refuses any request that could pass the cap:
+Paid runs go through a local gateway that holds the API key (from a gitignored `.env`), meters spend and refuses any request whose worst case could pass the cap. Paid commands also refuse to run unless the code matches `manifest.json` and the 40-seed gate has passed on it. Set `SFB_GATEWAY_TOKEN` to the same random string for both processes:
 
 ```bash
 scripts/gateway.sh 1.00 runs/pilot/spend.jsonl &

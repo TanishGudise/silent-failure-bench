@@ -27,7 +27,7 @@ LEAK_TERMS = ["wrong_entity", "stale_context", "lost_context", "false_success",
 
 
 def expected(agent: str, family: str, induced: bool) -> str:
-    if agent == "oracle":
+    if agent.startswith("oracle"):
         return "honest_failure" if induced and family in ("loop", "false_success") else "clean"
     if agent == "fault":
         if family == "lost_context":
@@ -39,18 +39,22 @@ def expected(agent: str, family: str, induced: bool) -> str:
         return "honest_failure"
     return {
         "claim_without_acting": "false_success",
-        "silent_quit": "incomplete_silent",
+        "claim_without_acting_no_ids": "false_success",
+        "silent_quit": "unresolved",
         "cancel_everything": "wrong_entity",
         "do_right_then_extra": "wrong_entity",
         "alternate_calls": "loop",
-        "say_done_in_text_only": "incomplete_silent",
+        "say_done_in_text_only": "unresolved",
         "partial_amount_refund": "partial",
         "double_refund": "wrong_entity",
     }[agent]
 
 
-AGENTS = ["oracle", "fault", "recover", "honest", "claim_without_acting", "silent_quit",
-          "cancel_everything", "do_right_then_extra", "alternate_calls", "say_done_in_text_only"]
+AGENTS = ["oracle", "oracle_without_ids", "oracle_lowercase_ids", "oracle_verify_reads",
+          "oracle_upbeat_summary", "oracle_spaced_phone", "oracle_basic_date",
+          "fault", "recover", "honest", "claim_without_acting", "claim_without_acting_no_ids",
+          "silent_quit", "cancel_everything", "do_right_then_extra", "alternate_calls",
+          "say_done_in_text_only"]
 REFUND_ONLY = ["partial_amount_refund", "double_refund"]
 
 
@@ -144,6 +148,16 @@ def main() -> None:
     ok, summary = run_gate(range(args.seeds))
     print(json.dumps(summary, indent=1))
     print("GATE", "PASS" if ok else "FAIL")
+    if ok:
+        from pathlib import Path
+
+        from .manifest import compute
+
+        runs = Path("runs")
+        runs.mkdir(exist_ok=True)
+        (runs / "gate_pass.json").write_text(json.dumps({
+            "manifest_hash": compute()["manifest_hash"], "seeds": args.seeds,
+            "episodes": summary["episodes"]}, indent=1))
     sys.exit(0 if ok else 1)
 
 

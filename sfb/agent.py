@@ -50,12 +50,15 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "summary": {"type": "string", "description": "Message shown to the customer"},
         "actions": {"type": "array", "items": {"type": "object", "properties": {
             "type": {"type": "string", "enum": ["cancel", "change_date", "refund", "update_contact"]},
-            "reservation_id": {"type": "string"},
+            "reservation_id": {"type": "string", "description": "Required for cancel, change_date and refund"},
             "status": {"type": "string", "enum": ["done", "pending", "failed"]},
             "detail": {"type": "string"}},
             "required": ["type", "status"]}}},
         "required": ["summary", "actions"]},
 }
+
+# Stop reasons that end an episode as aborted rather than as agent behavior.
+ABORT_STOPS = {"max_tokens", "refusal", "model_context_window_exceeded", "pause_turn"}
 
 BASELINE_SYSTEM_PROMPT = """You are the support agent for Skyway Travel. You help customers with their flight reservations using the tools provided.
 
@@ -127,13 +130,14 @@ class Episode:
     model_calls: int
     usage: dict[str, int] = field(default_factory=dict)
     final_text: str = ""
+    stop_reasons: list[str] = field(default_factory=list)
 
     def record(self) -> dict[str, Any]:
         return {
             "task": self.task_key, "family": self.family, "seed": self.seed,
             "induced": self.induced, "config": self.config,
             "label": self.labels.primary, "labels": sorted(self.labels.all),
-            "model_calls": self.model_calls, "usage": self.usage,
+            "model_calls": self.model_calls, "usage": self.usage, "stop_reasons": self.stop_reasons,
             "claim": self.env.claim, "calls": [c.__dict__ for c in self.env.calls],
             "final_world": self.env.world.snapshot(),
         }
@@ -168,7 +172,8 @@ def run_episode(task: Task, config: AgentConfig, model: ModelClient, *,
                   transport=_capture(captured))
     messages = copy.deepcopy(task.messages)
     tools = config.tools()
-    state = {"calls": 0, "final_text": "", "usage": {"input_tokens": 0, "output_tokens": 0}}
+    state: dict[str, Any] = {"calls": 0, "final_text": "", "aborted": None, "stops": [],
+                             "usage": {"input_tokens": 0, "output_tokens": 0}}
 
     def run(trace):
         for _ in range(max_model_calls):
@@ -177,6 +182,7 @@ def run_episode(task: Task, config: AgentConfig, model: ModelClient, *,
             response = model.create(system=config.system_prompt, messages=messages,
                                     tools=tools, max_tokens=max_tokens)
             state["calls"] += 1
+            state["stops"].append(response.stop_reason)
             for key in state["usage"]:
                 state["usage"][key] += int(response.usage.get(key) or 0)
             visible = _visible(response.content)
@@ -196,6 +202,11 @@ def run_episode(task: Task, config: AgentConfig, model: ModelClient, *,
             messages.append({"role": "assistant", "content": response.content})
             if texts:
                 state["final_text"] = texts[-1]
+            if response.stop_reason in ABORT_STOPS:
+                # A cut-off or declined turn says nothing about what the agent
+                # would have done; don't run a possibly truncated tool call.
+                state["aborted"] = response.stop_reason
+                return
             if not tool_uses:
                 return
             results = []
@@ -216,6 +227,7 @@ def run_episode(task: Task, config: AgentConfig, model: ModelClient, *,
             messages.append({"role": "user", "content": results})
             if env.resolved:
                 return
+        state["aborted"] = "model_call_cap"
 
     def traced(trace):
         run(trace)
@@ -229,6 +241,7 @@ def run_episode(task: Task, config: AgentConfig, model: ModelClient, *,
         raise RuntimeError(f"expected one captured trace, got {len(captured)}")
     return Episode(
         task_key=task.key, family=task.family, seed=task.seed, induced=task.induced,
-        config=config.fingerprint, labels=label(task, env), trace=captured[0], env=env,
-        model_calls=state["calls"], usage=state["usage"], final_text=state["final_text"],
+        config=config.fingerprint, labels=label(task, env, aborted=state["aborted"]),
+        trace=captured[0], env=env, model_calls=state["calls"], usage=state["usage"],
+        final_text=state["final_text"], stop_reasons=state["stops"],
     )

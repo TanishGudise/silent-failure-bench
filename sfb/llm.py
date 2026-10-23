@@ -4,6 +4,7 @@ gateway (sfb.gateway), which holds the key, meters spend and enforces caps."""
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import anthropic
@@ -15,10 +16,12 @@ AGENT_MODEL = "claude-haiku-5-5"
 
 class AnthropicModel:
     def __init__(self, base_url: str, *, model: str = AGENT_MODEL, run: str = "",
-                 effort: str | None = None, timeout: float = 180.0) -> None:
-        # The gateway ignores this key and attaches the real one upstream.
+                 effort: str | None = None, timeout: float = 330.0) -> None:
+        # The gateway token, not an API key: the gateway attaches the real key.
+        # No SDK retries: the gateway retries unbilled errors itself and logs
+        # every attempt. The timeout outlasts the gateway's upstream timeout.
         self.client = anthropic.Anthropic(
-            base_url=base_url, api_key="held-by-gateway", max_retries=2, timeout=timeout,
+            base_url=base_url, api_key=os.environ["SFB_GATEWAY_TOKEN"], max_retries=0, timeout=timeout,
             default_headers={"x-sfb-run": run},
         )
         self.model = model

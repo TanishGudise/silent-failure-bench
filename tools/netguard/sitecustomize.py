@@ -18,8 +18,11 @@ _LOCK = threading.Lock()
 
 def _log(kind, target):
     if _LOG:
-        with open(_LOG, "a") as handle:
-            handle.write(f"{time.time():.3f} pid={os.getpid()} {kind} {target!r}\n")
+        try:
+            with open(_LOG, "a") as handle:
+                handle.write(f"{time.time():.3f} pid={os.getpid()} {kind} {target!r}\n")
+        except OSError:
+            pass  # logging must never turn a refusal into a different error
 
 
 def _is_loopback(host):

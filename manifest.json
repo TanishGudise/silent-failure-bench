@@ -1,15 +1,26 @@
 {
  "files": {
-  "preregistration.md": "3a78ed530763dba646deacd045e76f52a02b39025fc3ea329247e6d9052837f6",
-  "sfb/world.py": "0be7cf260e466cb9da5131f70c694009067bed61af1a3995ea618d36ecd19f27",
-  "sfb/env.py": "7cd48481f3573acb0e9466f6d0cbbb4d925f937b0b98569bf9cbaf065d13ecfb",
+  "preregistration.md": "bd0f3b9b8a1e06dd6b8c26e7ad34e8a900c475fe3a5ea1168cf993a9f21d6e5f",
+  "pyproject.toml": "d0ee5858bd9bfcabe39da3a2ac2fa170aacff06703a18a18d75df7d5c0f1196c",
+  "scripts/gateway.sh": "fef2a9921af57143e0e9af0fbabb84858d6c2a3dbb406397eeb460bca48527b0",
+  "scripts/harness.sh": "e6838a6a1aaedb050e3672c9b10627216726b0766985bc09f663f9a5103acae6",
+  "tools/netguard/sitecustomize.py": "b2459ecb094bd4b73fed88f2326cad72b9da0f96f92da3b2367e77387c4be92e",
+  "tools/netguard/loopback.sb": "50b19464849937a4516999002c8f36eb66da02bb3a3296068f6bc2dfc9fad315",
+  "sfb/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "sfb/agent.py": "9f0687a67eab801790e7a22cd245cbc2e2deeb89dc5f632c7fe93077f8c6981b",
+  "sfb/analysis.py": "b1842d1edf2fa9338c4c7b888ea339eefb8930796bb8d20fefa116bbf572600a",
+  "sfb/detectors.py": "25956d25931dd1ad0c05099828f3c016c80d7015e93dd4fd5b83866ba8c014d8",
+  "sfb/env.py": "b0d155efdb8e0ad57101c16797c30e2f9da3b3b30db79ec2a57231c63799f351",
+  "sfb/fixloop.py": "d82784618d7dda5a1f0c22a6cca8727046bbd1d5a90bc9b22cd81fce2c3cb3a5",
+  "sfb/gate.py": "45c6b7da46a7fe3db32a0128bc9501bb98da0ff7d42f6b76aa0a7db4abe7ea59",
+  "sfb/gateway.py": "c7cf4aa211378c892fab575e8033a5591467fc42b2ba5ae98ab1d86ee43c0c60",
+  "sfb/labels.py": "e2c688d5d3a19781bbdedfdf5b81966d2ae6c233e98dafd5af4d0e2947773321",
+  "sfb/llm.py": "8da867ca9f73dea7f51cb6a99705d97fd67855acfcc8180df26ca0057e3d3f36",
+  "sfb/manifest.py": "2371e49fdfb63fcea683bb36a5dd2acb2c7ef7dcbc4f1a3aa22ba0c7bff0a93d",
+  "sfb/run.py": "ce69f9948b21f2fc48901d2bb6e30c802e9c15d7f566154a85a62a3152bc61f9",
+  "sfb/scripted.py": "eebc73789134a54cb050c3863998134c735445cf3edd207209a28beaf3f3d2a2",
   "sfb/tasks.py": "3ae70144af33eae87bed7ccb1e09b6ede268827160c9a471edff2be957eca922",
-  "sfb/labels.py": "1cbe941417c5de6519f02546a9f4796767b8e928984df2fa046156f1a7e61d5e",
-  "sfb/agent.py": "5e343bbdd76ca74095491dc84a740e1fbd87b3678b8c35ae760eb7a9a127bf4b",
-  "sfb/detectors.py": "a1a98640137ccdae6809547d392ae334bfea4f6fb2abca050955952dae992417",
-  "sfb/fixloop.py": "749a05479d285c18fad3116de534a41d0e0c12d2f711ce67f35b5596de43b19c",
-  "sfb/analysis.py": "b8b415ab3f9980b0adfce1d1e4bd4b3d2985d6ee565d76fe3a78393fcd6da83c",
-  "sfb/gate.py": "ef910598a8e19ef7efc5432a47856a19e3e2a8e2f3a36074c0984287d675d510"
+  "sfb/world.py": "0be7cf260e466cb9da5131f70c694009067bed61af1a3995ea618d36ecd19f27"
  },
- "manifest_hash": "4bfd09377d9d7459c2981ad3b13e0e52a6b1ed340d64822de357856e50e3bd2c"
+ "manifest_hash": "2d2817c9c998c4b36e1873ccef42526068654f64ea6f7be707e30d6587fca689"
 }

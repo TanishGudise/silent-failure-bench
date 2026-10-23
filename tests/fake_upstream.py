@@ -16,7 +16,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class FakeUpstream:
-    def __init__(self) -> None:
+    """mode: "ok"; "drop" (read the request, close without replying);
+    "overloaded_once" (529 with no usage, then normal replies)."""
+
+    def __init__(self, mode: str = "ok") -> None:
+        self.mode = mode
         self.requests: list[dict] = []
         self.lock = threading.Lock()
         handler = self._handler()
@@ -39,9 +43,16 @@ class FakeUpstream:
                 body = json.loads(self.rfile.read(int(self.headers["content-length"])))
                 with fake.lock:
                     fake.requests.append({"headers": dict(self.headers), "body": body})
-                reply = fake.respond(body)
+                    first = len(fake.requests) == 1
+                if fake.mode == "drop":
+                    self.close_connection = True
+                    self.connection.close()
+                    return
+                status, reply = 200, fake.respond(body)
+                if fake.mode == "overloaded_once" and first:
+                    status, reply = 529, {"type": "error", "error": {"type": "overloaded_error", "message": "busy"}}
                 data = json.dumps(reply).encode()
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("content-type", "application/json")
                 self.send_header("content-length", str(len(data)))
                 self.end_headers()

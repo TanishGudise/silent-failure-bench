@@ -12,8 +12,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FROZEN = ["preregistration.md", "sfb/world.py", "sfb/env.py", "sfb/tasks.py", "sfb/labels.py",
-          "sfb/agent.py", "sfb/detectors.py", "sfb/fixloop.py", "sfb/analysis.py", "sfb/gate.py"]
+FROZEN = ["preregistration.md", "pyproject.toml", "scripts/gateway.sh", "scripts/harness.sh",
+          "tools/netguard/sitecustomize.py", "tools/netguard/loopback.sb"] + sorted(
+    f"sfb/{p.name}" for p in (ROOT / "sfb").glob("*.py"))
 
 
 def compute() -> dict:

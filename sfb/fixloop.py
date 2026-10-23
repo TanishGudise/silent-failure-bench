@@ -1,9 +1,11 @@
 """Fix loop: propose a config fix from a triggering trace, then check it.
 
-Seeds (pre-registered): bench 0-999; gate held-out 5000-5004, outcome
+Seeds (pre-registered): bench 0-99; gate held-out 5000-5004, outcome
 held-out 5005-5024 (same family, induced); gate regression 6000-6004, outcome
 regression 6005-6024 (other families, alternating induced/natural). Replay is
-the triggering task itself, run 3 times with the fixed config.
+the triggering task itself, re-run 3 times with the fixed config. A null arm
+re-runs it 3 times with the unchanged config, so the gates can be read
+against what an empty fix would get.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from typing import Any
 
 from .agent import TOOL_SCHEMAS, AgentConfig
 from .detectors import judge_input
-from .labels import SILENT
+from .labels import NOT_SCORED, SILENT
 from .tasks import FAMILIES, Task, build
 
 ISSUE_TITLES = {
@@ -93,8 +95,13 @@ def regression_tasks(family: str, seeds: range) -> list[Task]:
     return [build(others[i % len(others)], s, i % 2 == 0) for i, s in enumerate(seeds)]
 
 
+PASSING = {"clean", "honest_failure"}
+
+
 def failed(label: str) -> bool:
-    return label in SILENT
+    """Outcome and gate sets: positives and aborted/unresolved runs count as
+    failures in both arms; episodes that errored are tracked separately."""
+    return label in SILENT or label in NOT_SCORED
 
 
 @dataclass
@@ -102,53 +109,82 @@ class FixResult:
     family: str
     trigger: str
     replay_labels: list[str]
+    null_replay_labels: list[str]
     gate_heldout: tuple[int, int]      # (baseline fails, fixed fails)
     gate_regression: tuple[int, int]
     outcome_heldout: tuple[int, int]
     outcome_regression: tuple[int, int]
+    errors: int = 0                    # errored episodes in this fix's sets, either arm
+    gate_only: bool = False
+
+    @staticmethod
+    def _passes(labels: list[str]) -> bool:
+        return bool(labels) and all(label in PASSING for label in labels)
 
     @property
     def replay_pass(self) -> bool:
-        return all(not failed(label) for label in self.replay_labels)
+        return self._passes(self.replay_labels)
+
+    @property
+    def null_replay_pass(self) -> bool:
+        return self._passes(self.null_replay_labels)
 
     @property
     def outcome(self) -> str:
+        if self.gate_only:
+            return "gate_only"
+        if self.errors:
+            return "excluded"
         bh, fh = self.outcome_heldout
         br, fr = self.outcome_regression
         if fr >= br + REGRESS_RISE or fh >= bh + REGRESS_RISE:
             return "regressed"
-        if fh <= bh - FIXED_DROP and fr < br + REGRESS_RISE:
+        if bh < FIXED_DROP:
+            return "undetermined"  # too few baseline failures to show a fix
+        if fh <= bh - FIXED_DROP:
             return "fixed"
         return "unchanged"
 
-    def gate(self, name: str) -> bool:
-        g1 = self.replay_pass
-        g2 = g1 and self.gate_heldout[1] < self.gate_heldout[0]
-        g3 = g2 and self.gate_regression[1] <= self.gate_regression[0]
+    def gate(self, name: str, *, null: bool = False) -> bool:
+        g1 = self.null_replay_pass if null else self.replay_pass
+        held, reg = self.gate_heldout, self.gate_regression
+        if null:  # the unchanged config scores exactly the baseline on the gate seeds
+            held, reg = (held[0], held[0]), (reg[0], reg[0])
+        g2 = g1 and held[1] < held[0]
+        g3 = g2 and reg[1] <= reg[0]
         return {"G1": g1, "G2": g2, "G3": g3}[name]
 
     def record(self) -> dict[str, Any]:
         return {**self.__dict__, "replay_pass": self.replay_pass, "outcome": self.outcome,
-                "gates": {g: self.gate(g) for g in ("G1", "G2", "G3")}}
+                "gates": {g: self.gate(g) for g in ("G1", "G2", "G3")},
+                "null_gates": {g: self.gate(g, null=True) for g in ("G1", "G2", "G3")}}
+
+
+SCORED = {"fixed", "unchanged", "regressed"}
 
 
 def gate_table(results: list[FixResult]) -> dict[str, dict[str, int]]:
-    """Per gate: PRs it would open, how many of them are bad, good fixes it keeps or blocks."""
+    """Per gate, over fixes with a scored outcome: PRs it would open, how many
+    are bad, good fixes kept and blocked, and how often the null fix passes."""
+    scored = [r for r in results if r.outcome in SCORED]
     table = {}
     for gate in ("G1", "G2", "G3"):
-        opened = [r for r in results if r.gate(gate)]
+        opened = [r for r in scored if r.gate(gate)]
         table[gate] = {
+            "scored_fixes": len(scored),
             "opened": len(opened),
             "bad_opened": sum(r.outcome != "fixed" for r in opened),
             "good_kept": sum(r.outcome == "fixed" for r in opened),
-            "good_blocked": sum(r.outcome == "fixed" and not r.gate(gate) for r in results),
+            "good_blocked": sum(r.outcome == "fixed" and not r.gate(gate) for r in scored),
+            "null_fix_passes": sum(r.gate(gate, null=True) for r in results),
+            "null_fix_tried": len(results),
         }
     return table
 
 
 def replay_false_pass(results: list[FixResult]) -> tuple[int, int]:
-    """(replay-passing fixes that are unchanged or regressed, replay-passing fixes)."""
-    passing = [r for r in results if r.replay_pass]
+    """(replay-passing scored fixes that are unchanged or regressed, replay-passing scored fixes)."""
+    passing = [r for r in results if r.replay_pass and r.outcome in SCORED]
     return sum(r.outcome != "fixed" for r in passing), len(passing)
 
 

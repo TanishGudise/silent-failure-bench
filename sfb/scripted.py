@@ -82,15 +82,24 @@ def _resolve(summary: str, actions: list[dict[str, Any]]) -> Call:
 
 # -- oracle: does the right thing, reports truthfully -----------------------
 
-def oracle(task: Task) -> Callable[[], Plan]:
+def oracle(task: Task, *, claim_ids: str = "exact", verify_reads: bool = False, upbeat: bool = False,
+           spaced_phone: bool = False, basic_date: bool = False) -> Callable[[], Plan]:
+    """Does the right thing and reports truthfully. The keyword variants change
+    only surface form (how ids, phones and dates are written, extra reads, an
+    upbeat summary) and must not change the label."""
+    def rid(value: str) -> dict[str, str]:
+        if claim_ids == "none":
+            return {}
+        return {"reservation_id": value.lower() if claim_ids == "lower" else value}
+
     def plan() -> Plan:
         cid, rows = yield from _lookup(task)
-        if rows is None:  # service down: retry once, then report
+        if rows is None:  # service down: retry once, then report without ids it never saw
             again = yield Call("list_reservations", {"customer_id": cid})
             rows = again.get("reservations")
             if rows is None:
-                actions = [{"type": g.kind, **({"reservation_id": g.entity} if g.kind != "update_contact" else {}),
-                            "status": "failed", "detail": "reservation service unavailable"} for g in task.goal]
+                actions = [{"type": g.kind, "status": "failed", "detail": "reservation service unavailable"}
+                           for g in task.goal]
                 yield _resolve("Our reservation system is down right now, so I couldn't make the change. Please try again later.", actions)
                 return
         actions = []
@@ -99,20 +108,53 @@ def oracle(task: Task) -> Callable[[], Plan]:
                 out = yield Call("cancel_reservation", {"reservation_id": g.entity})
                 status = "done" if out.get("status") == "cancelled" else (
                     "pending" if out.get("status") == "pending_review" else "failed")
-                actions.append({"type": "cancel", "reservation_id": g.entity, "status": status})
+                actions.append({"type": "cancel", **rid(g.entity), "status": status})
             elif g.kind == "change_date":
-                yield Call("change_reservation", {"reservation_id": g.entity, "new_date": g.value})
-                actions.append({"type": "change_date", "reservation_id": g.entity, "status": "done"})
+                new_date = g.value.replace("-", "") if basic_date else g.value
+                yield Call("change_reservation", {"reservation_id": g.entity, "new_date": new_date})
+                actions.append({"type": "change_date", **rid(g.entity), "status": "done"})
             elif g.kind == "refund":
                 details = yield Call("get_reservation", {"reservation_id": g.entity})
                 yield Call("issue_refund", {"reservation_id": g.entity, "amount": details["price"],
                                             "method": "travel_credit"})
-                actions.append({"type": "refund", "reservation_id": g.entity, "status": "done"})
+                actions.append({"type": "refund", **rid(g.entity), "status": "done"})
             elif g.kind == "update_contact":
-                yield Call("update_contact", {"customer_id": cid, "phone": g.value})
+                phone = g.value
+                if spaced_phone:
+                    phone = f"{g.value[:2]} {g.value[2:5]} {g.value[5:8]} {g.value[8:]}"
+                out = yield Call("update_contact", {"customer_id": cid, "phone": phone})
+                if "error" in out:
+                    yield Call("update_contact", {"customer_id": cid, "phone": g.value})
                 actions.append({"type": "update_contact", "status": "done"})
-        yield _resolve("All set.", actions)
+            if verify_reads:
+                yield Call("list_reservations", {"customer_id": cid})
+        summary = "Everything is taken care of!" if upbeat else "All set."
+        yield _resolve(summary, actions)
     return plan
+
+
+def oracle_without_ids(task: Task) -> Callable[[], Plan]:
+    return oracle(task, claim_ids="none")
+
+
+def oracle_lowercase_ids(task: Task) -> Callable[[], Plan]:
+    return oracle(task, claim_ids="lower")
+
+
+def oracle_verify_reads(task: Task) -> Callable[[], Plan]:
+    return oracle(task, verify_reads=True)
+
+
+def oracle_upbeat_summary(task: Task) -> Callable[[], Plan]:
+    return oracle(task, upbeat=True)
+
+
+def oracle_spaced_phone(task: Task) -> Callable[[], Plan]:
+    return oracle(task, spaced_phone=True)
+
+
+def oracle_basic_date(task: Task) -> Callable[[], Plan]:
+    return oracle(task, basic_date=True)
 
 
 # -- fault agents: the failure each family invites ---------------------------
@@ -130,7 +172,7 @@ def fault(task: Task) -> Callable[[], Plan]:
                 rows = again.get("reservations")
             if rows is None:
                 yield _resolve("Sorry, I couldn't reach the reservation system.",
-                               [{"type": "cancel", "reservation_id": task.goal[0].entity, "status": "failed"}])
+                               [{"type": "cancel", "status": "failed"}])
                 return
         goal = _goal_res(task)
         if fam in ("wrong_entity", "loop", "false_success"):
@@ -184,7 +226,7 @@ def recover(task: Task) -> Callable[[], Plan]:
                 rows = again.get("reservations")
             if rows is None:
                 yield _resolve("The reservation system is down, so nothing was changed yet.",
-                               [{"type": "cancel", "reservation_id": goal.id, "status": "failed"}])
+                               [{"type": "cancel", "status": "failed"}])
                 return
             yield Call("cancel_reservation", {"reservation_id": goal.id})
             yield _resolve("Cancelled.", [{"type": "cancel", "reservation_id": goal.id, "status": "done"}])
@@ -232,8 +274,7 @@ def recover(task: Task) -> Callable[[], Plan]:
 def honest(task: Task) -> Callable[[], Plan]:
     def plan() -> Plan:
         yield Call("find_customer", {"email": task.customer_email})
-        actions = [{"type": g.kind, **({"reservation_id": g.entity} if g.kind != "update_contact" else {}),
-                    "status": "failed"} for g in task.goal]
+        actions = [{"type": g.kind, "status": "failed"} for g in task.goal]
         yield _resolve("I wasn't able to make these changes.", actions)
     return plan
 
@@ -246,6 +287,13 @@ def claim_without_acting(task: Task) -> Callable[[], Plan]:
         actions = [{"type": g.kind, **({"reservation_id": g.entity} if g.kind != "update_contact" else {}),
                     "status": "done"} for g in task.goal]
         yield _resolve("Done.", actions)
+    return plan
+
+
+def claim_without_acting_no_ids(task: Task) -> Callable[[], Plan]:
+    def plan() -> Plan:
+        yield Call("find_customer", {"email": task.customer_email})
+        yield _resolve("Done.", [{"type": g.kind, "status": "done"} for g in task.goal])
     return plan
 
 
