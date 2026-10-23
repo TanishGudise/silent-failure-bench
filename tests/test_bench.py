@@ -258,6 +258,35 @@ def test_paid_path_end_to_end_against_the_fake(gate_env, monkeypatch):
         assert _strict_problems(tools["resolve_ticket"]["input_schema"]) == []
 
 
+def test_the_sonnet_judge_arm_sends_d1s_prompt_on_sonnet(gate_env, monkeypatch):
+    env, upstream, tmp = gate_env
+    server, url = _start(env, upstream, tmp / "spend.jsonl", 1.0)
+    monkeypatch.chdir(tmp)
+    from sfb import run as runner
+    import sys
+
+    try:
+        for argv in (["episodes", "--run", "s", "--gateway", url, "--families", "partial", "--seeds", "0-0",
+                      "--variants", "induced"],
+                     ["detect", "--run", "s", "--gateway", url, "--detectors", "d1,d1s"]):
+            monkeypatch.setattr(sys, "argv", ["sfb.run", *argv])
+            runner.main()
+    finally:
+        server.shutdown()
+    judged = [r for r in upstream.requests if (r["body"].get("output_config") or {}).get("format")]
+    assert len(judged) == 2
+    by_model = {r["body"]["model"]: r["body"] for r in judged}
+    haiku, sonnet = by_model["claude-haiku-5-5"], by_model["claude-sonnet-5-5"]
+    # Same prompt, schema and limits as D1; only the model differs.
+    assert {k: v for k, v in sonnet.items() if k != "model"} == {k: v for k, v in haiku.items() if k != "model"}
+    ledger = [json.loads(l) for l in (tmp / "spend.jsonl").read_text().splitlines()]
+    d1s = [e for e in ledger if e["run"] == "s-d1s"]
+    assert len(d1s) == 1 and d1s[0]["model"] == "claude-sonnet-5-5"
+    assert d1s[0]["usd"] == pytest.approx(gateway.actual_usd("claude-sonnet-5-5", d1s[0]["usage"]))
+    verdicts = [json.loads(l) for l in (tmp / "runs/s/detect.jsonl").read_text().splitlines()]
+    assert {v["detector"] for v in verdicts} == {"d1", "d1s"} and all("flag" in v for v in verdicts)
+
+
 def test_fixloop_end_to_end_against_the_fake(gate_env, monkeypatch):
     env, upstream, tmp = gate_env
     server, url = _start(env, upstream, tmp / "spend.jsonl", 2.0)

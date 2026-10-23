@@ -105,10 +105,16 @@ def preflight(require_smoke: bool = True) -> str:
     return current["manifest_hash"]
 
 
-def model_for(gateway: str, run: str, effort: str | None = None):
+# LLM detectors and the model each calls. d1s is the generic judge (D1's
+# prompt, schema and parsing) on a stronger model (Amendment 13).
+JUDGE_MODELS = {"d1": "claude-haiku-5-5", "d1b": "claude-haiku-5-5", "d1s": "claude-sonnet-5-5"}
+GENERIC_JUDGES = {"d1", "d1s"}
+
+
+def model_for(gateway: str, run: str, effort: str | None = None, model: str = "claude-haiku-5-5"):
     from .llm import AnthropicModel
 
-    return AnthropicModel(gateway, run=run, effort=effort)
+    return AnthropicModel(gateway, run=run, effort=effort, model=model)
 
 
 def stop_reason(exc: Exception) -> str | None:
@@ -249,7 +255,7 @@ UNBILLED_NOTES = {"unbilled error reply; retrying", "unbilled error reply"}
 # (a non-standard tier or non-global region, or usage the gateway can't
 # read): the smoke stops on them.
 PERSISTENT_NOTES = ("unexpected ", "unreadable usage")
-RUN_TAG_SUFFIXES = ("", "-smoke", "-d1", "-d1b", "-fixloop", "-fixer")
+RUN_TAG_SUFFIXES = ("", "-smoke", "-d1", "-d1b", "-d1s", "-fixloop", "-fixer")
 
 
 def ledger_totals(ledgers: list[Path], tags: set[str] | None = None) -> dict[str, Any]:
@@ -363,14 +369,15 @@ def cmd_detect(args) -> None:
     from .manifest import compute
 
     wanted = args.detectors.split(",")
-    paid = {"d1", "d1b"} & set(wanted)
+    paid = set(JUDGE_MODELS) & set(wanted)
     if paid and not args.gateway:
         raise SystemExit("--gateway is required for d1/d1b")
     manifest_hash = preflight() if paid else compute()["manifest_hash"]
     episodes = Store(RUNS / args.run / "episodes.jsonl")
     out = Store(RUNS / args.run / "detect.jsonl")
     instructions = json.loads((RUNS / args.run / "config.json").read_text())["system_prompt"]
-    models = {name: model_for(args.gateway, f"{args.run}-{name}") for name in ("d1", "d1b") if name in wanted}
+    models = {name: model_for(args.gateway, f"{args.run}-{name}", model=JUDGE_MODELS[name])
+              for name in JUDGE_MODELS if name in wanted}
     stopper = Stopper()
     if args.retry_errors:  # every re-run of an errored detector call is logged
         retried = [{"key": k, "detector": r["detector"], "previous_error": r["error"]}
@@ -393,8 +400,9 @@ def cmd_detect(args) -> None:
             elif name == "d3":
                 v, usage = detectors.probe(payload, world_from(row["record"]["final_world"])), {}
             else:
-                system, user = (detectors.judge_prompt if name == "d1" else detectors.monitor_prompt)(payload, instructions)
-                schema = detectors.JUDGE_SCHEMA if name == "d1" else detectors.MONITOR_SCHEMA
+                generic = name in GENERIC_JUDGES
+                system, user = (detectors.judge_prompt if generic else detectors.monitor_prompt)(payload, instructions)
+                schema = detectors.JUDGE_SCHEMA if generic else detectors.MONITOR_SCHEMA
                 try:
                     answer, usage, stop_reason = models[name].complete_json(
                         system=system, user=user, schema=schema, max_tokens=JUDGE_MAX_TOKENS)
@@ -411,7 +419,7 @@ def cmd_detect(args) -> None:
                     out.add({"key": key, "episode": row["key"], "detector": name, "manifest": manifest_hash,
                              "error": stop_reason, "usage": usage})
                     continue
-                v = (detectors.parse_judge if name == "d1" else detectors.parse_monitors)(answer)
+                v = (detectors.parse_judge if generic else detectors.parse_monitors)(answer)
             out.add({"key": key, "episode": row["key"], "detector": name, "manifest": manifest_hash,
                      "flag": v.flag, "family": v.family, "reasons": v.reasons, "usage": usage})
 
@@ -672,9 +680,9 @@ def cmd_report(args) -> None:
     print("detector errors by family (excluded from the tables below):", detector_errors(args.run))
     for slice_name, sub in (("induced", [r for r in rows if r["induced"]]),
                             ("natural", [r for r in rows if not r["induced"]])):
-        tables = {det: detector_table(sub, det) for det in ("d1", "d1b", "d2", "d3")}
+        tables = {det: detector_table(sub, det) for det in ("d1", "d1b", "d1s", "d2", "d3")}
         tables["d2|d3"] = detector_table(union(sub), "d2|d3")
-        for judge in ("d1", "d1b"):
+        for judge in ("d1", "d1b", "d1s"):
             casc = cascade(sub, judge)
             if casc:
                 tables[f"d2+d3 then {judge}"] = detector_table(casc, "cascade")
@@ -697,7 +705,7 @@ def cmd_report(args) -> None:
                 print(f"  judge calls needed   {table['judge_calls_share']:.0%} of traces")
     if args.ledger:
         traces = len(rows)
-        for det in ("d1", "d1b"):
+        for det in ("d1", "d1b", "d1s"):
             print(f"{det}: ${cost_per_1k(Path(args.ledger), args.run, det, traces)} per 1,000 traces")
         agent_episodes = len(Store(RUNS / args.run / "episodes.jsonl").rows)
         spend_report(Path(args.ledger), args.run, agent_episodes, args.console_usd)
