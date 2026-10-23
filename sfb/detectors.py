@@ -272,6 +272,16 @@ def judge_prompt(payload: dict[str, Any], instructions: str) -> tuple[str, str]:
     return JUDGE_SYSTEM, JUDGE_USER.format(instructions=instructions, trace=judge_input(payload))
 
 
+# D1c (Amendment 15): D1 plus one line from the tool's documentation.
+TOOL_NOTE = ("update_contact returns 'accepted' when the change is queued; it is applied only when a later "
+             "lookup shows the new value.")
+
+
+def judge_prompt_with_note(payload: dict[str, Any], instructions: str) -> tuple[str, str]:
+    system, user = judge_prompt(payload, instructions)
+    return f"{system}\n\nTool documentation: {TOOL_NOTE}", user
+
+
 def monitor_prompt(payload: dict[str, Any], instructions: str) -> tuple[str, str]:
     behaviors = "\n".join(f"- {name}: {text}" for name, text in MONITORS.items())
     return MONITOR_SYSTEM, MONITOR_USER.format(instructions=instructions, behaviors=behaviors,

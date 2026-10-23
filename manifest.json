@@ -1,6 +1,6 @@
 {
  "files": {
-  "preregistration.md": "4cba308e40ad63baf77444f673a82bf739e27dc2fa204d579cb0717cf30e20ae",
+  "preregistration.md": "7d2ee21f33329f2a8738632ceca5fbf24e01f452c7594e862f0b2fd24042dc44",
   "pyproject.toml": "d0ee5858bd9bfcabe39da3a2ac2fa170aacff06703a18a18d75df7d5c0f1196c",
   "scripts/gateway.sh": "fef2a9921af57143e0e9af0fbabb84858d6c2a3dbb406397eeb460bca48527b0",
   "scripts/harness.sh": "36be4516825092cd5de5acfde21c4f55a6d69a7709aa6a8bf6048dc38eab9a45",
@@ -9,7 +9,7 @@
   "sfb/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "sfb/agent.py": "ee7f1e890199f3a72ce08670387755db1c2af6bcdf9047a69fbaf2f1ee91c864",
   "sfb/analysis.py": "b0f76b3e9ad0b15174557bf83c388dcdb06ea69d84b9f0ae184db5559563d8fc",
-  "sfb/detectors.py": "fd0987ea5d7d012f148963dd900d546e2f4e300534f6fb55388930eba24310e9",
+  "sfb/detectors.py": "b4d1db824d03ba228925119321214c8aa7cbe9668d343a46ec7eee20414e87a3",
   "sfb/env.py": "d08f1318f24f1aef4f0ac2a847db4bc7deb62960fbed661f0054d6ef7eb83506",
   "sfb/fixloop.py": "3c90c7c69fecf35238ac082ae524d0b1800f0da00031e37d5a0f52be6cb1a342",
   "sfb/gate.py": "a140cd43c8b9a502be524bed962e433e53c1196f7d3f64958b2fdcaa83858ba4",
@@ -17,10 +17,10 @@
   "sfb/labels.py": "c1e6879c2e96072ca0b450a84c68cb0b8ac28ebf50a2ee503207569810754658",
   "sfb/llm.py": "7776e33d2d8893b2a5b5be91085228191cd5fc26087c9a4060e7cc492afbea7f",
   "sfb/manifest.py": "2371e49fdfb63fcea683bb36a5dd2acb2c7ef7dcbc4f1a3aa22ba0c7bff0a93d",
-  "sfb/run.py": "5a6915aa0195450a6f9d1e24567c79374b30c722c9d830472ee179b2ee1ecd54",
+  "sfb/run.py": "dc4bbe6bc0cd6df3078a885990dbae532a42415abe28d057cfea286f8ad74b4b",
   "sfb/scripted.py": "0a8d9fb6bd26a33ce77f13e443a9cf5363a190e46c865ee778820c4cdf5f7da0",
   "sfb/tasks.py": "8143ff4d753298e05d5b108badf7381a02bd19b07861816d5527bf3b693b3bd2",
   "sfb/world.py": "08ceb98556890cb948804ffe8c358f441f386bd08b985d62c9d59b4e0aacdb3d"
  },
- "manifest_hash": "eb8e711ce999ec8ddfd833113f48a69d438e9e3ece454951adf0ec9f539ee31d"
+ "manifest_hash": "928012069c1fb9089449e0af18cc03c752bd7dd95da10329cc863f0d52299634"
 }

@@ -107,8 +107,10 @@ def preflight(require_smoke: bool = True) -> str:
 
 # LLM detectors and the model each calls. d1s is the generic judge (D1's
 # prompt, schema and parsing) on a stronger model (Amendment 13).
-JUDGE_MODELS = {"d1": "claude-haiku-5-5", "d1b": "claude-haiku-5-5", "d1s": "claude-sonnet-5-5"}
-GENERIC_JUDGES = {"d1", "d1s"}
+# d1c is D1 with one line of tool documentation added (Amendment 15).
+JUDGE_MODELS = {"d1": "claude-haiku-5-5", "d1b": "claude-haiku-5-5", "d1s": "claude-sonnet-5-5",
+                "d1c": "claude-haiku-5-5"}
+GENERIC_JUDGES = {"d1", "d1s", "d1c"}
 
 
 def model_for(gateway: str, run: str, effort: str | None = None, model: str = "claude-haiku-5-5"):
@@ -255,7 +257,7 @@ UNBILLED_NOTES = {"unbilled error reply; retrying", "unbilled error reply"}
 # (a non-standard tier or non-global region, or usage the gateway can't
 # read): the smoke stops on them.
 PERSISTENT_NOTES = ("unexpected ", "unreadable usage")
-RUN_TAG_SUFFIXES = ("", "-smoke", "-d1", "-d1b", "-d1s", "-fixloop", "-fixer")
+RUN_TAG_SUFFIXES = ("", "-smoke", "-d1", "-d1b", "-d1s", "-d1c", "-fixloop", "-fixer")
 
 
 def ledger_totals(ledgers: list[Path], tags: set[str] | None = None) -> dict[str, Any]:
@@ -401,7 +403,9 @@ def cmd_detect(args) -> None:
                 v, usage = detectors.probe(payload, world_from(row["record"]["final_world"])), {}
             else:
                 generic = name in GENERIC_JUDGES
-                system, user = (detectors.judge_prompt if generic else detectors.monitor_prompt)(payload, instructions)
+                prompt = (detectors.judge_prompt_with_note if name == "d1c"
+                          else detectors.judge_prompt if generic else detectors.monitor_prompt)
+                system, user = prompt(payload, instructions)
                 schema = detectors.JUDGE_SCHEMA if generic else detectors.MONITOR_SCHEMA
                 try:
                     answer, usage, stop_reason = models[name].complete_json(
@@ -427,6 +431,12 @@ def cmd_detect(args) -> None:
     if args.families:  # judge these families only, e.g. to set the order a cap cuts in
         wanted_families = set(args.families.split(","))
         rows = [r for r in rows if r.get("record", {}).get("family") in wanted_families]
+    if args.variants:
+        induced = {v == "induced" for v in args.variants.split(",")}
+        rows = [r for r in rows if r.get("record", {}).get("induced") in induced]
+    if args.labels:  # by primary label, e.g. only the positives of a family
+        wanted_labels = set(args.labels.split(","))
+        rows = [r for r in rows if r.get("record", {}).get("label") in wanted_labels]
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         list(pool.map(one, rows))
     stopper.check("verdicts")
@@ -684,7 +694,7 @@ def cmd_report(args) -> None:
     print("detector errors by family (excluded from the tables below):", detector_errors(args.run))
     for slice_name, sub in (("induced", [r for r in rows if r["induced"]]),
                             ("natural", [r for r in rows if not r["induced"]])):
-        tables = {det: detector_table(sub, det) for det in ("d1", "d1b", "d1s", "d2", "d3")}
+        tables = {det: detector_table(sub, det) for det in ("d1", "d1b", "d1s", "d1c", "d2", "d3")}
         tables["d2|d3"] = detector_table(union(sub), "d2|d3")
         for judge in ("d1", "d1b", "d1s"):
             casc = cascade(sub, judge)
@@ -709,7 +719,7 @@ def cmd_report(args) -> None:
                 print(f"  judge calls needed   {table['judge_calls_share']:.0%} of traces")
     if args.ledger:
         traces = len(rows)
-        for det in ("d1", "d1b", "d1s"):
+        for det in ("d1", "d1b", "d1s", "d1c"):
             print(f"{det}: ${cost_per_1k(Path(args.ledger), args.run, det, traces)} per 1,000 traces")
         agent_episodes = len(Store(RUNS / args.run / "episodes.jsonl").rows)
         spend_report(Path(args.ledger), args.run, agent_episodes, args.console_usd)
@@ -789,6 +799,8 @@ def main() -> None:
     p.add_argument("--gateway", default="")
     p.add_argument("--detectors", default="d2,d3")
     p.add_argument("--families", default="", help="only these families' episodes (default: all)")
+    p.add_argument("--variants", default="", help="only these variants: induced,natural (default: both)")
+    p.add_argument("--labels", default="", help="only episodes with these primary labels (default: all)")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--retry-errors", action="store_true", help="re-run detector calls that errored (logged)")
     p.set_defaults(fn=cmd_detect)

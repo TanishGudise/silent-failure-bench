@@ -307,6 +307,34 @@ def test_detect_can_judge_one_family_at_a_time(gate_env, monkeypatch):
     assert [v["episode"].split(":")[0] for v in verdicts] == ["partial"]
 
 
+def test_d1c_is_d1_plus_the_tool_note_on_selected_episodes(gate_env, monkeypatch):
+    env, upstream, tmp = gate_env
+    server, url = _start(env, upstream, tmp / "spend.jsonl", 1.0)
+    monkeypatch.chdir(tmp)
+    from sfb import run as runner
+    import sys
+
+    try:
+        monkeypatch.setattr(sys, "argv", ["sfb.run", "episodes", "--run", "c", "--gateway", url, "--families",
+                                          "partial", "--seeds", "0-1"])
+        runner.main()
+        episodes = [json.loads(l)["record"] for l in (tmp / "runs/c/episodes.jsonl").read_text().splitlines()]
+        label = next(e["label"] for e in episodes if not e["induced"])  # the fake's agent isn't clean
+        selected = sum(not e["induced"] and e["label"] == label for e in episodes)
+        before = len(upstream.requests)
+        monkeypatch.setattr(sys, "argv", ["sfb.run", "detect", "--run", "c", "--gateway", url, "--detectors",
+                                          "d1,d1c", "--variants", "natural", "--labels", label])
+        runner.main()
+    finally:
+        server.shutdown()
+    judged = upstream.requests[before:]
+    assert 0 < selected < len(episodes) and len(judged) == 2 * selected
+    d1 = next(r["body"] for r in judged if detectors.TOOL_NOTE not in r["body"]["system"])
+    d1c = next(r["body"] for r in judged if detectors.TOOL_NOTE in r["body"]["system"])
+    assert d1c["system"] == d1["system"] + "\n\nTool documentation: " + detectors.TOOL_NOTE
+    assert {k: v for k, v in d1c.items() if k != "system"} == {k: v for k, v in d1.items() if k != "system"}
+
+
 def test_fixloop_end_to_end_against_the_fake(gate_env, monkeypatch):
     env, upstream, tmp = gate_env
     server, url = _start(env, upstream, tmp / "spend.jsonl", 2.0)
