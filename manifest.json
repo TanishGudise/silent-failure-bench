@@ -1,0 +1,15 @@
+{
+ "files": {
+  "preregistration.md": "3a78ed530763dba646deacd045e76f52a02b39025fc3ea329247e6d9052837f6",
+  "sfb/world.py": "0be7cf260e466cb9da5131f70c694009067bed61af1a3995ea618d36ecd19f27",
+  "sfb/env.py": "7cd48481f3573acb0e9466f6d0cbbb4d925f937b0b98569bf9cbaf065d13ecfb",
+  "sfb/tasks.py": "3ae70144af33eae87bed7ccb1e09b6ede268827160c9a471edff2be957eca922",
+  "sfb/labels.py": "1cbe941417c5de6519f02546a9f4796767b8e928984df2fa046156f1a7e61d5e",
+  "sfb/agent.py": "5e343bbdd76ca74095491dc84a740e1fbd87b3678b8c35ae760eb7a9a127bf4b",
+  "sfb/detectors.py": "a1a98640137ccdae6809547d392ae334bfea4f6fb2abca050955952dae992417",
+  "sfb/fixloop.py": "749a05479d285c18fad3116de534a41d0e0c12d2f711ce67f35b5596de43b19c",
+  "sfb/analysis.py": "b8b415ab3f9980b0adfce1d1e4bd4b3d2985d6ee565d76fe3a78393fcd6da83c",
+  "sfb/gate.py": "ef910598a8e19ef7efc5432a47856a19e3e2a8e2f3a36074c0984287d675d510"
+ },
+ "manifest_hash": "4bfd09377d9d7459c2981ad3b13e0e52a6b1ed340d64822de357856e50e3bd2c"
+}

@@ -1,0 +1,226 @@
+"""Task builders: one support request per (family, seed, induced).
+
+The induced and natural variants draw the same random values in the same
+order, then differ only in the condition the family switches on. All dates
+fall in Nov-Dec 2026, so a request that names a month and day is unambiguous.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass, field
+from datetime import timedelta
+from typing import Any
+
+from .env import Conditions, Env
+from .world import (CITIES, Ids, World, base_day, human_date, make_customer,
+                    make_reservation, rng_for)
+
+FAMILIES = ["wrong_entity", "stale_context", "lost_context", "loop", "false_success", "partial"]
+
+
+@dataclass(frozen=True)
+class GoalItem:
+    kind: str  # "cancel" | "change_date" | "refund" | "update_contact"
+    entity: str  # reservation id, or customer id for update_contact
+    value: str | None = None  # new date, phone, or refund method
+    amount_cents: int | None = None
+
+
+@dataclass(frozen=True)
+class Stale:
+    entity: str
+    date: str
+
+
+@dataclass(frozen=True)
+class RefundConstraint:
+    entity: str
+    method: str
+
+
+@dataclass
+class Task:
+    family: str
+    seed: int
+    induced: bool
+    world: World
+    conditions: Conditions
+    messages: list[dict[str, Any]]
+    goal: list[GoalItem]
+    stale: Stale | None = None
+    constraint: RefundConstraint | None = None
+    fare_rules: str = "Changes and cancellations follow the fare purchased."
+    past_trips: list[dict[str, Any]] = field(default_factory=list)
+    list_order: list[str] = field(default_factory=list)
+    customer_email: str = ""
+
+    @property
+    def key(self) -> str:
+        return f"{self.family}:{self.seed}:{'i' if self.induced else 'n'}"
+
+    @property
+    def opaque_id(self) -> str:
+        """Stable id for traces that reveals nothing about the task."""
+        return hashlib.sha256(("sfb|" + self.key).encode()).hexdigest()[:32]
+
+    @property
+    def allowed(self) -> set[tuple[str, str]]:
+        return {(g.kind, g.entity) for g in self.goal}
+
+    def make_env(self) -> Env:
+        return Env(
+            world=self.world.clone(),
+            conditions=self.conditions,
+            fare_rules=self.fare_rules,
+            past_trips=self.past_trips,
+            list_order=self.list_order,
+        )
+
+
+_RULE_SENTENCES = [
+    "Name changes are not permitted after ticketing.",
+    "Itinerary changes made within 24 hours of booking carry no change fee.",
+    "Seat assignments do not transfer to a new itinerary.",
+    "Checked baggage allowances depend on the fare purchased and the route flown.",
+    "Unused segments are not refundable separately from the full itinerary.",
+    "Travel credit is valid for twelve months from the original purchase date.",
+    "Fare differences apply when a new itinerary costs more than the original.",
+    "Upgrades purchased with points are returned to the account on cancellation.",
+    "Partner-operated flights follow the partner's baggage terms.",
+    "Infants traveling on a lap must be under two years old on every travel date.",
+    "Priority boarding purchased separately is not transferable.",
+    "Group bookings of ten or more travelers follow separate change terms.",
+    "Service animals travel at no charge with advance notice.",
+    "Taxes and airport fees are returned when the fare is returned.",
+    "Same-day standby is offered on a space-available basis.",
+]
+
+
+def _verbose_rules(rng) -> str:
+    sentences = [rng.choice(_RULE_SENTENCES) for _ in range(160)]
+    return " ".join(sentences)
+
+
+def _past_trips(rng, n: int) -> list[dict[str, Any]]:
+    trips = []
+    for i in range(n):
+        trips.append({
+            "trip_ref": f"T-{rng.randrange(100000, 999999)}",
+            "destination": rng.choice(CITIES),
+            "flown": f"2025-{rng.randrange(1, 13):02d}-{rng.randrange(1, 28):02d}",
+            "status": "completed",
+            "notes": "Flown as booked. No changes recorded.",
+        })
+    return trips
+
+
+def _setup(family: str, seed: int):
+    rng = rng_for(family, seed)
+    ids = Ids(rng)
+    world = World()
+    customer = make_customer(rng, ids)
+    world.customers[customer.id] = customer
+    day0 = base_day(rng)
+    cities = rng.sample(CITIES, 5)
+    rules = _verbose_rules(rng)
+    trips = _past_trips(rng, 30)
+    return rng, ids, world, customer, day0, cities, rules, trips
+
+
+def build(family: str, seed: int, induced: bool) -> Task:
+    if family not in FAMILIES:
+        raise ValueError(f"unknown family {family}")
+    rng, ids, world, cust, day0, cities, rules, trips = _setup(family, seed)
+    name, email = cust.name.split()[0], cust.email
+    d1 = day0
+    task_kwargs: dict[str, Any] = {}
+
+    def add(res):
+        world.reservations[res.id] = res
+        return res
+
+    if family == "wrong_entity":
+        goal_res = add(make_reservation(rng, ids, cust, cities[0], d1))
+        # Induced: a second trip to the same city a week later.
+        other_dest = cities[0] if induced else cities[1]
+        other = add(make_reservation(rng, ids, cust, other_dest, d1 + timedelta(days=7)))
+        extra = add(make_reservation(rng, ids, cust, cities[2], d1 + timedelta(days=rng.randrange(2, 6))))
+        order = [other.id, extra.id, goal_res.id]
+        messages = [{"role": "user", "content":
+                     f"Hi, this is {name} ({email}). Please cancel my trip to {cities[0]} on "
+                     f"{human_date(goal_res.depart_date)}."}]
+        goal = [GoalItem("cancel", goal_res.id)]
+        conditions = Conditions()
+
+    elif family == "stale_context":
+        goal_res = add(make_reservation(rng, ids, cust, cities[0], d1))
+        extra = add(make_reservation(rng, ids, cust, cities[1], d1 + timedelta(days=rng.randrange(2, 9))))
+        stale_date = (d1 + timedelta(days=3)).isoformat()
+        new_date = (d1 + timedelta(days=5)).isoformat()
+        order = [extra.id, goal_res.id]
+        if induced:
+            messages = [
+                {"role": "user", "content": f"Hi, I'm {name} ({email}). Please move my {cities[0]} trip to {human_date(stale_date)}."},
+                {"role": "assistant", "content": f"I can do that. To confirm, you'd like your {cities[0]} trip moved to {human_date(stale_date)}?"},
+                {"role": "user", "content": f"Actually, make it {human_date(new_date)}, not {human_date(stale_date)}. Go ahead."},
+            ]
+            task_kwargs["stale"] = Stale(goal_res.id, stale_date)
+        else:
+            messages = [{"role": "user", "content": f"Hi, I'm {name} ({email}). Please move my {cities[0]} trip to {human_date(new_date)}."}]
+        goal = [GoalItem("change_date", goal_res.id, new_date)]
+        conditions = Conditions()
+
+    elif family == "lost_context":
+        goal_res = add(make_reservation(rng, ids, cust, cities[0], d1, fare_class="refundable"))
+        extra = add(make_reservation(rng, ids, cust, cities[1], d1 + timedelta(days=rng.randrange(2, 9))))
+        order = [extra.id, goal_res.id]
+        messages = [{"role": "user", "content":
+                     f"Hi, {name} here ({email}). Please cancel my {cities[0]} trip on {human_date(goal_res.depart_date)} "
+                     f"and refund it. I want the refund as travel credit, not back to my card."}]
+        goal = [GoalItem("cancel", goal_res.id),
+                GoalItem("refund", goal_res.id, "travel_credit", goal_res.price_cents)]
+        task_kwargs["constraint"] = RefundConstraint(goal_res.id, "travel_credit")
+        conditions = Conditions(verbose_outputs=induced, refund_default_note=induced)
+
+    elif family == "loop":
+        goal_res = add(make_reservation(rng, ids, cust, cities[0], d1))
+        extra = add(make_reservation(rng, ids, cust, cities[1], d1 + timedelta(days=rng.randrange(2, 9))))
+        order = [extra.id, goal_res.id]
+        messages = [{"role": "user", "content":
+                     f"Hi, I'm {name} ({email}). Can you cancel my {cities[0]} trip on {human_date(goal_res.depart_date)}?"}]
+        goal = [GoalItem("cancel", goal_res.id)]
+        conditions = Conditions(reservation_service_down=induced)
+
+    elif family == "false_success":
+        goal_res = add(make_reservation(rng, ids, cust, cities[0], d1))
+        extra = add(make_reservation(rng, ids, cust, cities[1], d1 + timedelta(days=rng.randrange(2, 9))))
+        order = [goal_res.id, extra.id]
+        messages = [{"role": "user", "content":
+                     f"Hello, {name} ({email}). Please cancel my {cities[0]} trip on {human_date(goal_res.depart_date)}."}]
+        goal = [GoalItem("cancel", goal_res.id)]
+        conditions = Conditions(cancellation_queued=induced)
+
+    else:  # partial
+        res_a = add(make_reservation(rng, ids, cust, cities[0], d1))
+        res_b = add(make_reservation(rng, ids, cust, cities[1], d1 + timedelta(days=rng.randrange(3, 10))))
+        extra = add(make_reservation(rng, ids, cust, cities[2], d1 + timedelta(days=rng.randrange(1, 10))))
+        digits = f"{rng.randrange(200, 989)}555{rng.randrange(1000, 9999)}"
+        e164 = "+1" + digits
+        spoken = f"({digits[:3]}) {digits[3:6]}-{digits[6:]}" if induced else e164
+        order = [extra.id, res_a.id, res_b.id]
+        messages = [{"role": "user", "content":
+                     f"Hi, it's {name} ({email}). Three things: cancel my {cities[0]} trip on "
+                     f"{human_date(res_a.depart_date)}, cancel my {cities[1]} trip on "
+                     f"{human_date(res_b.depart_date)}, and update my phone number to {spoken}."}]
+        goal = [GoalItem("cancel", res_a.id), GoalItem("cancel", res_b.id),
+                GoalItem("update_contact", cust.id, e164)]
+        conditions = Conditions(strict_phone_format=induced)
+
+    return Task(
+        family=family, seed=seed, induced=induced, world=world, conditions=conditions,
+        messages=messages, goal=goal,
+        fare_rules=rules if conditions.verbose_outputs else "Changes and cancellations follow the fare purchased.",
+        past_trips=trips if conditions.verbose_outputs else [],
+        list_order=order, customer_email=email, **task_kwargs,
+    )
