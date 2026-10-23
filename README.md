@@ -24,12 +24,12 @@ uv venv --python 3.11 .venv && uv pip install --python .venv/bin/python -e '.[de
 .venv/bin/python -m sfb.run sizes       # $0: trace size against number of model calls
 ```
 
-Paid runs go through a local gateway that holds the API key (from a gitignored `.env`), meters spend and refuses any request whose worst case could pass the cap. Paid commands also refuse to run unless the code matches `manifest.json`, the 40-seed gate has passed on it, and a one-episode smoke run's token counts have been confirmed against the API console. Set `SFB_GATEWAY_TOKEN` to the same random string for both processes:
+Paid runs go through a local gateway that holds the API key (from a gitignored `.env`), meters spend and refuses any request whose worst case could pass the cap. Paid commands also refuse to run unless the code matches `manifest.json`, the 40-seed gate has passed on it, and a one-episode smoke run's token counts have been confirmed against the API console (once per workspace and gateway). Set `SFB_GATEWAY_TOKEN` to the same random string for both processes:
 
 ```bash
 scripts/gateway.sh 2.00 runs/pilot/spend.jsonl &
 scripts/harness.sh smoke --run pilot --gateway http://127.0.0.1:8765 --ledger runs/pilot/spend.jsonl
-# when the console's Usage page shows it: its exact token counts, and the workspace's spend limit
+# when the console's Usage page shows it: the workspace's exact token counts, and its spend limit
 scripts/harness.sh smoke --run pilot --ledger runs/pilot/spend.jsonl --console-tokens IN,OUT --spend-limit USD
 scripts/harness.sh episodes --run pilot --gateway http://127.0.0.1:8765 --seeds 0-4
 scripts/harness.sh detect --run pilot --gateway http://127.0.0.1:8765 --detectors d1,d1b,d2,d3

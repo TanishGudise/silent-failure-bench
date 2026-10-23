@@ -95,11 +95,13 @@ def preflight(require_smoke: bool = True) -> str:
     passed = json.loads(marker.read_text()) if marker.exists() else {}
     if passed.get("manifest_hash") != current["manifest_hash"] or passed.get("seeds", 0) < 40:
         raise SystemExit("run `python -m sfb.gate --seeds 40` on the frozen code first")
+    # The smoke checks the gateway's accounting against the console, once per
+    # workspace and gateway: a re-freeze that leaves sfb/gateway.py alone keeps it.
     smoke_path = RUNS / "smoke.json"
     smoke = json.loads(smoke_path.read_text()) if smoke_path.exists() else {}
     if require_smoke and not (smoke.get("confirmed") is True
-                              and smoke.get("manifest_hash") == current["manifest_hash"]):
-        raise SystemExit("run `smoke` and confirm its tokens against the console on the frozen code first")
+                              and smoke.get("gateway_hash") == current["files"]["sfb/gateway.py"]):
+        raise SystemExit("run `smoke` and confirm its tokens against the console with this gateway first")
     return current["manifest_hash"]
 
 
@@ -117,7 +119,7 @@ def stop_reason(exc: Exception) -> str | None:
     status = getattr(exc, "status_code", None)
     if status in STOP_STATUSES:
         return f"upstream refused the key ({status})"
-    if status == 400 and any(phrase in text.lower() for phrase in STOP_PHRASES):
+    if isinstance(status, int) and 400 <= status < 500 and any(phrase in text.lower() for phrase in STOP_PHRASES):
         return "upstream usage or spend limit reached"
     return None
 
@@ -220,9 +222,13 @@ def ledger_rows(ledger: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
 
 
-def ledger_totals(ledger: Path, tag: str) -> dict[str, Any]:
-    """Requests, tokens and spend booked under one run tag."""
-    rows = [r for r in ledger_rows(ledger) if r.get("run") == tag]
+UNBILLED_NOTES = {"unbilled error reply; retrying", "unbilled error reply"}
+RUN_TAG_SUFFIXES = ("", "-smoke", "-d1", "-d1b", "-fixloop", "-fixer")
+
+
+def ledger_totals(ledgers: list[Path], tags: set[str] | None = None) -> dict[str, Any]:
+    """Requests, tokens and spend booked in these ledgers (under these run tags)."""
+    rows = [r for path in ledgers for r in ledger_rows(path) if tags is None or r.get("run") in tags]
     tokens_in = tokens_out = 0
     notes = []
     for r in rows:
@@ -233,56 +239,76 @@ def ledger_totals(ledger: Path, tag: str) -> dict[str, Any]:
             tokens_out += int(usage.get("output_tokens") or 0)
         except (TypeError, ValueError, AttributeError):
             notes.append("unreadable usage")
-        if r.get("note") and r["note"] != "unbilled error reply; retrying":
+        if r.get("note") and r["note"] not in UNBILLED_NOTES:
             notes.append(r["note"])
     return {"requests": len(rows), "input_tokens": tokens_in, "output_tokens": tokens_out,
             "usd": round(sum(r["usd"] for r in rows), 6), "notes": notes}
 
 
+def gateway_hash() -> str:
+    from .manifest import compute
+
+    return compute()["files"]["sfb/gateway.py"]
+
+
 def cmd_smoke(args) -> None:
-    """Before the pilot: one paid episode, as the workspace's first call; then
-    its ledger tokens must equal the console's (Usage page) exactly."""
+    """Reconcile the gateway's ledgers with the console, once per workspace and gateway.
+
+    Run: one paid episode through the gateway (on a new workspace, its first
+    call). Confirm: the console's input and output token counts for the
+    workspace, over all dates, must equal the sums over every ledger exactly.
+    The check is blind: the ledger's numbers are never printed before it.
+    """
     path = RUNS / "smoke.json"
-    tag = f"{args.run}-smoke"
-    ledger = Path(args.ledger)
+    saved = json.loads(path.read_text()) if path.exists() else {}
+    ledgers = [Path(p) for p in args.ledger]
+    current_gateway = gateway_hash()
     if not args.console_tokens:
+        if saved.get("confirmed") and saved.get("gateway_hash") == current_gateway:
+            raise SystemExit("the smoke is already confirmed for this workspace and gateway")
         if not args.gateway:
             raise SystemExit("--gateway is required to run the smoke episode")
         manifest_hash = preflight(require_smoke=False)
-        store = Store(RUNS / args.run / "smoke_episodes.jsonl")
-        (row,) = run_episodes(store, [(build(*SMOKE_TASK), AgentConfig(), 0)], args.gateway, tag, 1,
-                              manifest_hash)
-        totals = ledger_totals(ledger, tag)
-        path.write_text(json.dumps({"manifest_hash": manifest_hash, "run": args.run, "ledger": totals,
-                                    "episode_ok": "record" in row, "confirmed": False}, indent=1))
-        print(json.dumps(totals, indent=1))
-        print("Read the workspace's input and output tokens on the console's Usage page, then run "
-              f"`smoke --run {args.run} --ledger {args.ledger} --console-tokens IN,OUT --spend-limit USD`.")
+        store = Store(RUNS / args.run / f"smoke_episodes-{current_gateway[:8]}.jsonl")
+        # An errored smoke episode is re-run by running `smoke` again (logged).
+        (row,) = run_episodes(store, [(build(*SMOKE_TASK), AgentConfig(), 0)], args.gateway,
+                              f"{args.run}-smoke", 1, manifest_hash, retry_errors=True)
+        saved.update({"manifest_hash": manifest_hash, "gateway_hash": current_gateway, "run": args.run,
+                      "episode_ok": "record" in row, "confirmed": False})
+        path.write_text(json.dumps(saved, indent=1))
+        if "record" not in row:
+            raise SystemExit("the smoke episode errored; run `smoke` again to retry it")
+        print("Smoke episode done. When the console's Usage page shows it, run `smoke --ledger <every ledger> "
+              "--console-tokens IN,OUT --spend-limit USD` with the workspace's token counts over all dates "
+              "(input = uncached + cache write + cache read).")
         return
-    saved = json.loads(path.read_text())
-    totals = ledger_totals(ledger, tag)
+    if not saved:
+        raise SystemExit("run the smoke episode first")
+    totals = ledger_totals(ledgers)
     console = tuple(int(x) for x in args.console_tokens.split(","))
     problems = []
-    if totals != saved["ledger"]:
-        problems.append("the ledger changed since the smoke episode")
+    if saved.get("gateway_hash") != current_gateway:
+        problems.append("the gateway changed since the smoke episode")
     if not saved.get("episode_ok"):
         problems.append("the smoke episode errored")
     if not totals["requests"]:
-        problems.append("no smoke requests in the ledger")
+        problems.append("no requests in the given ledgers")
     if console != (totals["input_tokens"], totals["output_tokens"]):
-        problems.append(f"console tokens {console} != ledger {(totals['input_tokens'], totals['output_tokens'])}")
+        problems.append("the console's token counts don't equal the ledgers'")
     if totals["notes"]:
-        problems.append(f"gateway booked a bound: {totals['notes']}")
+        problems.append(f"the gateway booked a bound: {totals['notes']}")
     if args.spend_limit is None or not 0 < args.spend_limit <= TOTAL_BUDGET_USD:
         problems.append(f"record the workspace's console spend limit (0 < limit <= ${TOTAL_BUDGET_USD:.0f})")
-    saved.update({"console_tokens": list(console), "spend_limit_usd": args.spend_limit,
-                  "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                  "problems": problems, "confirmed": not problems})
+    # Every attempt is kept, so a mismatch followed by a retyped match shows.
+    saved.setdefault("attempts", []).append({
+        "console_tokens": list(console), "ledger_tokens": [totals["input_tokens"], totals["output_tokens"]],
+        "ledgers": [str(p) for p in ledgers], "spend_limit_usd": args.spend_limit,
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "problems": problems})
+    saved.update({"confirmed": not problems, "spend_limit_usd": args.spend_limit})
     path.write_text(json.dumps(saved, indent=1))
     print("SMOKE OK" if not problems else "STOP: " + "; ".join(problems))
     if problems:
         raise SystemExit(1)
-
 
 def cmd_episodes(args) -> None:
     manifest_hash = preflight()
@@ -370,34 +396,64 @@ def cmd_fixloop(args) -> None:
     fixes = Store(RUNS / args.run / "fixes.jsonl")
     baseline = AgentConfig()
     fixer = model_for(args.gateway, args.run + "-fixer")
+    fixer_stopper = Stopper()
     tag = args.run + "-fixloop"
     summary_path = RUNS / args.run / "fixloop_summary.json"
-    previous = json.loads(summary_path.read_text())["fixes"] if summary_path.exists() else []
+    saved = json.loads(summary_path.read_text()) if summary_path.exists() else {}
     results: dict[str, fixloop.FixResult] = {
         r["trigger"]: fixloop.FixResult(**{k: (tuple(v) if isinstance(v, list) and k.startswith(("gate_", "outcome_")) else v)
                                            for k, v in r.items() if k in fixloop.FixResult.__dataclass_fields__})
-        for r in previous}
-
-    fixer_failures: dict[str, str] = (json.loads(summary_path.read_text()).get("fixer_failures", {})
-                                      if summary_path.exists() else {})
+        for r in saved.get("fixes", [])}
+    fixer_failures: dict[str, str] = saved.get("fixer_failures", {})
 
     def label_of(row: dict[str, Any]) -> str:
         return row["record"]["label"] if "record" in row else "error"
 
-    for family in args.families.split(","):
-        triggers = sorted((r for r in bench.rows.values() if "record" in r
-                           and r["record"]["family"] == family and r["record"]["induced"]
-                           and r["record"]["label"] == family), key=lambda r: r["record"]["seed"])
-        triggers = triggers[: args.per_family]
-        if not triggers:
+    families = args.families.split(",")
+    triggers: dict[str, list[dict[str, Any]]] = {}
+    for family in families:
+        triggers[family] = sorted((r for r in bench.rows.values() if "record" in r
+                                   and r["record"]["family"] == family and r["record"]["induced"]
+                                   and r["record"]["label"] == family),
+                                  key=lambda r: r["record"]["seed"])[: args.per_family]
+        if not triggers[family]:
             print(f"{family}: no triggering trace")
-            continue
-        outcome_heldout = range(0) if args.gate_only else fixloop.OUTCOME_HELDOUT
-        outcome_regression = range(0) if args.gate_only else fixloop.OUTCOME_REGRESSION
+    outcome_heldout = range(0) if args.gate_only else fixloop.OUTCOME_HELDOUT
+    outcome_regression = range(0) if args.gate_only else fixloop.OUTCOME_REGRESSION
+
+    def propose(family: str, trig: dict[str, Any]) -> dict[str, Any] | None:
+        key = f"fix|{trig['key']}"
+        if key not in fixes.rows:
+            system, user = fixloop.fixer_prompt(baseline, family, trig["trace"])
+            try:
+                answer, usage, stop = fixer.complete_json(system=system, user=user, schema=fixloop.FIXER_SCHEMA,
+                                                          max_tokens=FIXER_MAX_TOKENS)
+            except Exception as exc:
+                # Nothing stored, so the next run retries it; a budget or key
+                # refusal, or MAX_ERRORS_IN_A_ROW in a row, stops the loop.
+                fixer_stopper.error(exc)
+                fixer_failures[trig["key"]] = f"call failed: {type(exc).__name__}"
+                print(f"{key}: fixer call failed ({type(exc).__name__}); re-run to retry")
+                fixer_stopper.check("fixes")
+                return None
+            fixer_stopper.ok()
+            fixes.add({"key": key, "family": family, "manifest": manifest_hash, "answer": answer,
+                       "usage": usage, "stop": stop})
+        answer = fixes.rows[key]["answer"]
+        if not answer:
+            # The model's own refusal, cutoff or unparseable answer: a real outcome, reported.
+            fixer_failures[trig["key"]] = f"no usable answer: {fixes.rows[key]['stop']}"
+            print(f"{key}: fixer gave no usable answer ({fixes.rows[key]['stop']})")
+            return None
+        fixer_failures.pop(trig["key"], None)
+        return answer
+
+    def evaluate(family: str, trig: dict[str, Any], answer: dict[str, Any]) -> fixloop.FixResult:
         sets = [fixloop.heldout_tasks(family, fixloop.GATE_HELDOUT),
                 fixloop.heldout_tasks(family, outcome_heldout),
                 fixloop.regression_tasks(family, fixloop.GATE_REGRESSION),
                 fixloop.regression_tasks(family, outcome_regression)]
+        # The family's baseline runs (stored, so later triggers reuse them).
         base_rows = run_episodes(store, [(t, baseline, 0) for tasks in sets for t in tasks],
                                  args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
         # The null fix: the unchanged config again (rep 1) on the gate seeds.
@@ -405,73 +461,69 @@ def cmd_fixloop(args) -> None:
                                       args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
         null_held_fails = sum(fixloop.failed(label_of(r)) for r in null_gate_rows[:len(sets[0])])
         null_reg_fails = sum(fixloop.failed(label_of(r)) for r in null_gate_rows[len(sets[0]):])
-        for trig in triggers:
-            key = f"fix|{trig['key']}"
-            if key not in fixes.rows:
-                system, user = fixloop.fixer_prompt(baseline, family, trig["trace"])
-                try:
-                    answer, usage, stop = fixer.complete_json(system=system, user=user, schema=fixloop.FIXER_SCHEMA,
-                                                              max_tokens=FIXER_MAX_TOKENS)
-                except Exception as exc:
-                    reason = stop_reason(exc)
-                    if reason:
-                        raise RunStopped(f"{reason} at the fixer call: stopped") from exc
-                    # Transport or API error: nothing stored, so the next run retries it.
-                    print(f"{key}: fixer call failed ({type(exc).__name__}); re-run to retry")
-                    fixer_failures[trig["key"]] = f"call failed: {type(exc).__name__}"
+        fixed = fixloop.apply_fix(baseline, answer)
+        trigger_task = build(family, trig["record"]["seed"], True)
+        # Fresh re-runs of the trigger: the fixed config, and the unchanged
+        # config (reps 1-3; rep 0 is the bench episode that triggered).
+        replays = run_episodes(store, [(trigger_task, fixed, rep) for rep in range(fixloop.REPLAYS)],
+                               args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+        nulls = run_episodes(store, [(trigger_task, baseline, rep) for rep in range(1, fixloop.REPLAYS + 1)],
+                             args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+        fix_rows = run_episodes(store, [(t, fixed, 0) for tasks in sets for t in tasks],
+                                args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+        cuts = [0]
+        for tasks in sets:
+            cuts.append(cuts[-1] + len(tasks))
+
+        def fails(rows, i):
+            return sum(fixloop.failed(label_of(r)) for r in rows[cuts[i]:cuts[i + 1]])
+
+        errors = sum("error" in r for r in replays + nulls + fix_rows + base_rows + null_gate_rows)
+        return fixloop.FixResult(
+            family=family, trigger=trig["key"],
+            replay_labels=[label_of(r) for r in replays],
+            null_replay_labels=[label_of(r) for r in nulls],
+            gate_heldout=(fails(base_rows, 0), fails(fix_rows, 0)),
+            outcome_heldout=(fails(base_rows, 1), fails(fix_rows, 1)),
+            gate_regression=(fails(base_rows, 2), fails(fix_rows, 2)),
+            outcome_regression=(fails(base_rows, 3), fails(fix_rows, 3)),
+            null_gate_heldout=(fails(base_rows, 0), null_held_fails),
+            null_gate_regression=(fails(base_rows, 2), null_reg_fails),
+            errors=errors, gate_only=args.gate_only,
+        )
+
+    stopped = None
+    try:
+        # Every family's first trigger before any family's second, so a stop at
+        # the cap leaves the families balanced. Each fix is proposed before its
+        # family's baseline runs, so a failing fixer costs only its own calls.
+        for rank in range(args.per_family):
+            for family in families:
+                if rank >= len(triggers[family]):
                     continue
-                fixes.add({"key": key, "family": family, "manifest": manifest_hash, "answer": answer,
-                           "usage": usage, "stop": stop})
-            answer = fixes.rows[key]["answer"]
-            if not answer:
-                # The model's own refusal, cutoff or unparseable answer: a real outcome, reported.
-                fixer_failures[trig["key"]] = f"no usable answer: {fixes.rows[key]['stop']}"
-                print(f"{key}: fixer gave no usable answer ({fixes.rows[key]['stop']})")
-                continue
-            fixer_failures.pop(trig["key"], None)
-            fixed = fixloop.apply_fix(baseline, answer)
-            trigger_task = build(family, trig["record"]["seed"], True)
-            # Fresh re-runs of the trigger: the fixed config, and the unchanged
-            # config (reps 1-3; rep 0 is the bench episode that triggered).
-            replays = run_episodes(store, [(trigger_task, fixed, rep) for rep in range(fixloop.REPLAYS)],
-                                   args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
-            nulls = run_episodes(store, [(trigger_task, baseline, rep) for rep in range(1, fixloop.REPLAYS + 1)],
-                                 args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
-            fix_rows = run_episodes(store, [(t, fixed, 0) for tasks in sets for t in tasks],
-                                    args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
-            cuts = [0]
-            for tasks in sets:
-                cuts.append(cuts[-1] + len(tasks))
-
-            def fails(rows, i):
-                return sum(fixloop.failed(label_of(r)) for r in rows[cuts[i]:cuts[i + 1]])
-
-            errors = sum("error" in r for r in replays + nulls + fix_rows + base_rows + null_gate_rows)
-            result = fixloop.FixResult(
-                family=family, trigger=trig["key"],
-                replay_labels=[label_of(r) for r in replays],
-                null_replay_labels=[label_of(r) for r in nulls],
-                gate_heldout=(fails(base_rows, 0), fails(fix_rows, 0)),
-                outcome_heldout=(fails(base_rows, 1), fails(fix_rows, 1)),
-                gate_regression=(fails(base_rows, 2), fails(fix_rows, 2)),
-                outcome_regression=(fails(base_rows, 3), fails(fix_rows, 3)),
-                null_gate_heldout=(fails(base_rows, 0), null_held_fails),
-                null_gate_regression=(fails(base_rows, 2), null_reg_fails),
-                errors=errors, gate_only=args.gate_only,
-            )
-            results[trig["key"]] = result
-            print(json.dumps(result.record()))
-    final = list(results.values())
-    bad, passing = fixloop.replay_false_pass(final)
-    lo, hi = wilson(bad, passing)
-    summary_path.write_text(json.dumps({
-        "manifest_hash": manifest_hash,
-        "fixes": [r.record() for r in final],
-        "replay_false_pass": {"bad": bad, "replay_passing_scored": passing, "wilson95": [lo, hi]},
-        "gates": fixloop.gate_table(final),
-        "fixer_failures": fixer_failures,
-    }, indent=1))
-
+                trig = triggers[family][rank]
+                answer = propose(family, trig)
+                if answer is None:
+                    continue
+                result = evaluate(family, trig, answer)
+                results[trig["key"]] = result
+                print(json.dumps(result.record()))
+    except BaseException as exc:
+        stopped = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        # Written on every exit, so a run stopped at its cap still has one.
+        final = list(results.values())
+        bad, passing = fixloop.replay_false_pass(final)
+        lo, hi = wilson(bad, passing)
+        summary_path.write_text(json.dumps({
+            "manifest_hash": manifest_hash,
+            "stopped": stopped,
+            "fixes": [r.record() for r in final],
+            "replay_false_pass": {"bad": bad, "replay_passing_scored": passing, "wilson95": [lo, hi]},
+            "gates": fixloop.gate_table(final),
+            "fixer_failures": fixer_failures,
+        }, indent=1))
 
 def load_rows(run: str) -> list[dict[str, Any]]:
     episodes = Store(RUNS / run / "episodes.jsonl")
@@ -527,14 +579,14 @@ def cost_per_1k(ledger: Path, run: str, detector: str, traces: int) -> float | N
 def spend_report(ledger: Path, run: str, agent_episodes: int, console_usd: float | None) -> None:
     """Booked spend per run tag, the mean agent cost per episode (the CP5
     cut), and, given the console's cost, the post-pilot dollar check."""
-    rows = [e for e in ledger_rows(ledger) if e.get("run") == run or str(e.get("run")).startswith(run + "-")]
-    per_tag: dict[str, list[float]] = {}
-    for e in rows:
-        per_tag.setdefault(e["run"], []).append(e["usd"])
-    for tag, usd in sorted(per_tag.items()):
-        print(f"spend {tag:22s} ${sum(usd):.4f} over {len(usd)} ledger rows")
+    tags = {run + suffix for suffix in RUN_TAG_SUFFIXES}
+    rows = [e for e in ledger_rows(ledger) if e.get("run") in tags]
+    for tag in sorted({e["run"] for e in rows}):
+        t = ledger_totals([ledger], {tag})
+        print(f"spend {tag:22s} ${t['usd']:.4f} over {t['requests']} ledger rows; "
+              f"tokens in {t['input_tokens']:,}, out {t['output_tokens']:,}")
     if agent_episodes:
-        mean = sum(per_tag.get(run, [])) / agent_episodes
+        mean = ledger_totals([ledger], {run})["usd"] / agent_episodes
         print(f"mean agent cost per episode: ${mean:.5f} (CP5 uses one trigger per family above $0.0055)")
     total = sum(e["usd"] for e in rows)
     print(f"booked total: ${total:.4f}")
@@ -565,7 +617,7 @@ def cmd_report(args) -> None:
     for family in FAMILIES:
         sub = [r for r in rows if r["induced"] and r["family"] == family and r["label"] not in NOT_SCORED]
         hits = sum(r["label"] == family for r in sub)
-        low = "  BELOW 15%" if sub and hits / len(sub) < 0.15 else ""
+        low = "  BELOW 15%" if not sub or hits / len(sub) < 0.15 else ""
         print(f"  {family:14s} {fmt(rate(hits, len(sub)))}{low}")
     print("positives per family (primary label = family, both variants):",
           {f: sum(r["label"] == f for r in rows) for f in FAMILIES})
@@ -675,8 +727,8 @@ def main() -> None:
     p = sub.add_parser("smoke")
     p.add_argument("--run", required=True)
     p.add_argument("--gateway", default="")
-    p.add_argument("--ledger", required=True, help="the gateway's ledger")
-    p.add_argument("--console-tokens", default="", help="IN,OUT from the console's Usage page: confirms the smoke")
+    p.add_argument("--ledger", action="append", default=[], help="a gateway ledger (confirm: give every one)")
+    p.add_argument("--console-tokens", default="", help="IN,OUT for the workspace from the console's Usage page")
     p.add_argument("--spend-limit", type=float, default=None, help="the workspace's console spend limit, USD")
     p.set_defaults(fn=cmd_smoke)
     p = sub.add_parser("episodes")

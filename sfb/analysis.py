@@ -1,8 +1,8 @@
 """Metrics with Wilson 95% intervals (pre-registered definitions).
 
-Positive: an episode whose primary label is a silent failure. Aborted and
-unresolved episodes are neither positives nor negatives: they are left out of
-every rate here and counted separately.
+Positive: an episode whose primary label is a silent failure. Aborted,
+unresolved and off_enum episodes are neither positives nor negatives: they are
+left out of every rate here and counted separately.
 Recall for family F: flagged episodes / episodes whose primary label is F.
 Precision: flagged episodes that are silent failures / flagged episodes.
 False flags: flagged episodes among clean ones, reported separately for

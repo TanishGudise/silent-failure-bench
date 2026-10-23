@@ -286,6 +286,60 @@ def test_fixloop_end_to_end_against_the_fake(gate_env, monkeypatch):
     assert len(fixed_configs) == 2  # baseline and the fixer's config
 
 
+def test_a_stopped_fix_loop_still_writes_its_summary(gate_env, monkeypatch):
+    env, upstream, tmp = gate_env
+    server, url = _start(env, upstream, tmp / "spend.jsonl", 2.0)
+    monkeypatch.chdir(tmp)
+    from sfb import run as runner
+    import sys
+
+    try:
+        monkeypatch.setattr(sys, "argv", ["sfb.run", "episodes", "--run", "s", "--gateway", url,
+                                          "--families", "wrong_entity", "--seeds", "0-0", "--variants", "induced"])
+        runner.main()
+        upstream.limit_after = len(upstream.requests)  # the fixer call hits the spend limit
+        monkeypatch.setattr(sys, "argv", ["sfb.run", "fixloop", "--run", "s", "--gateway", url,
+                                          "--families", "wrong_entity", "--per-family", "1"])
+        with pytest.raises(SystemExit, match="usage or spend limit"):
+            runner.main()
+    finally:
+        server.shutdown()
+    summary = json.loads((tmp / "runs/s/fixloop_summary.json").read_text())
+    assert "usage or spend limit" in summary["stopped"]
+    assert summary["fixes"] == [] and list(summary["fixer_failures"]) == ["wrong_entity:0:i|" +
+                                                                         AgentConfig().fingerprint + "|0"]
+    # The fixer is asked before the family's baseline runs, so nothing else ran.
+    assert not (tmp / "runs/s/fixloop_episodes.jsonl").exists()
+
+
+def test_key_and_spend_limit_refusals_stop_on_any_4xx():
+    from sfb import run as runner
+
+    class Refused(Exception):
+        def __init__(self, status, text):
+            super().__init__(text)
+            self.status_code = status
+
+    assert runner.stop_reason(Refused(429, "You have reached your specified workspace API usage limits."))
+    assert runner.stop_reason(Refused(400, "Your credit balance is too low"))
+    assert runner.stop_reason(Refused(403, "forbidden"))
+    assert runner.stop_reason(Refused(429, "rate limited")) is None
+    assert runner.stop_reason(Refused(500, "usage limit")) is None
+
+
+def test_spend_report_counts_only_this_runs_tags(tmp_path, capsys):
+    from sfb import run as runner
+
+    ledger = tmp_path / "spend.jsonl"
+    ledger.write_text("".join(json.dumps({"run": tag, "usd": usd, "usage": {}}) + "\n" for tag, usd in
+                              (("pilot", 1.0), ("pilot-d1", 0.25), ("pilot-smoke", 0.01), ("pilot-2", 5.0))))
+    runner.spend_report(ledger, "pilot", 100, console_usd=1.3)
+    out = capsys.readouterr().out
+    assert "booked total: $1.2600" in out and "pilot-2" not in out
+    assert "mean agent cost per episode: $0.01000" in out
+    assert "OK" in out.splitlines()[-1]
+
+
 def test_budget_refusal_stops_the_run_without_storing_rows(gate_env, monkeypatch):
     env, upstream, tmp = gate_env
     server, url = _start(env, upstream, tmp / "spend.jsonl", 0.000001)
@@ -357,7 +411,7 @@ def test_jobs_and_detection_run_seed_major():
                        (1, "loop", True), (1, "loop", False), (1, "partial", True), (1, "partial", False)]
 
 
-def test_smoke_reconciles_ledger_tokens_with_the_console(gate_env, monkeypatch):
+def test_smoke_reconciles_ledger_tokens_with_the_console(gate_env, monkeypatch, capsys):
     env, upstream, tmp = gate_env
     server, url = _start(env, upstream, tmp / "spend.jsonl", 1.0)
     monkeypatch.chdir(tmp)
@@ -371,16 +425,24 @@ def test_smoke_reconciles_ledger_tokens_with_the_console(gate_env, monkeypatch):
 
     try:
         saved = smoke("--gateway", url)
+        totals = runner.ledger_totals([tmp / "spend.jsonl"])
+        # Blind: the ledger's numbers aren't shown before the console is read.
+        assert str(totals["input_tokens"]) not in capsys.readouterr().out
+        assert saved["confirmed"] is False and saved["episode_ok"]
+        tokens = f"{totals['input_tokens']},{totals['output_tokens']}"
+        with pytest.raises(SystemExit):
+            smoke("--console-tokens", "1,2", "--spend-limit", "20")
+        assert json.loads((tmp / "runs/smoke.json").read_text())["confirmed"] is False
+        with pytest.raises(SystemExit):
+            smoke("--console-tokens", tokens)  # no spend limit recorded
+        saved = smoke("--console-tokens", tokens, "--spend-limit", "20")
+        assert saved["confirmed"] is True and len(saved["attempts"]) == 3
+        # Once confirmed for this gateway, it isn't run again.
+        with pytest.raises(SystemExit, match="already confirmed"):
+            smoke("--gateway", url)
     finally:
         server.shutdown()
-    assert saved["confirmed"] is False and saved["episode_ok"]
-    tokens = f"{saved['ledger']['input_tokens']},{saved['ledger']['output_tokens']}"
-    with pytest.raises(SystemExit):
-        smoke("--console-tokens", "1,2", "--spend-limit", "20")
-    assert json.loads((tmp / "runs/smoke.json").read_text())["confirmed"] is False
-    with pytest.raises(SystemExit):
-        smoke("--console-tokens", tokens)  # no spend limit recorded
-    assert smoke("--console-tokens", tokens, "--spend-limit", "20")["confirmed"] is True
+    assert json.loads((tmp / "runs/smoke.json").read_text())["confirmed"] is True
 
 
 def test_paid_commands_refuse_until_the_smoke_is_confirmed(tmp_path, monkeypatch):
@@ -390,18 +452,20 @@ def test_paid_commands_refuse_until_the_smoke_is_confirmed(tmp_path, monkeypatch
     monkeypatch.delenv("SFB_TEST_MODE")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(manifest, "ROOT", tmp_path)
-    monkeypatch.setattr(manifest, "compute", lambda: {"manifest_hash": "h"})
+    monkeypatch.setattr(manifest, "compute", lambda: {"manifest_hash": "h", "files": {"sfb/gateway.py": "g"}})
     (tmp_path / "manifest.json").write_text(json.dumps({"manifest_hash": "h"}))
     (tmp_path / "runs").mkdir()
     (tmp_path / "runs/gate_pass.json").write_text(json.dumps({"manifest_hash": "h", "seeds": 40}))
     assert runner.preflight(require_smoke=False) == "h"
     with pytest.raises(SystemExit, match="smoke"):
         runner.preflight()
-    for smoke in ({"manifest_hash": "h", "confirmed": False}, {"manifest_hash": "old", "confirmed": True}):
+    for smoke in ({"gateway_hash": "g", "confirmed": False}, {"gateway_hash": "old", "confirmed": True}):
         (tmp_path / "runs/smoke.json").write_text(json.dumps(smoke))
         with pytest.raises(SystemExit, match="smoke"):
             runner.preflight()
-    (tmp_path / "runs/smoke.json").write_text(json.dumps({"manifest_hash": "h", "confirmed": True}))
+    # A re-freeze that leaves the gateway alone keeps the smoke.
+    (tmp_path / "runs/smoke.json").write_text(json.dumps({"manifest_hash": "old", "gateway_hash": "g",
+                                                          "confirmed": True}))
     assert runner.preflight() == "h"
 
 

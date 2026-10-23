@@ -1,6 +1,6 @@
 {
  "files": {
-  "preregistration.md": "db93abbf463c47173a1f99a8e68b02cb5dfc6a8f467db8bf648c34aecd3be9c3",
+  "preregistration.md": "1872a337c0045ce9e879f8ea891c00cb57c7225bd22df5e0ebd0382511a7e474",
   "pyproject.toml": "d0ee5858bd9bfcabe39da3a2ac2fa170aacff06703a18a18d75df7d5c0f1196c",
   "scripts/gateway.sh": "fef2a9921af57143e0e9af0fbabb84858d6c2a3dbb406397eeb460bca48527b0",
   "scripts/harness.sh": "36be4516825092cd5de5acfde21c4f55a6d69a7709aa6a8bf6048dc38eab9a45",
@@ -8,7 +8,7 @@
   "tools/netguard/loopback.sb": "50b19464849937a4516999002c8f36eb66da02bb3a3296068f6bc2dfc9fad315",
   "sfb/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "sfb/agent.py": "8317a978ca206f71562e29f1bb19f2401500c6c7e1a61e023bffed9e10c03890",
-  "sfb/analysis.py": "fbd6041144d67791d62ff92abef13769cb9bdded9105d8df33e469b5933eea8f",
+  "sfb/analysis.py": "b0f76b3e9ad0b15174557bf83c388dcdb06ea69d84b9f0ae184db5559563d8fc",
   "sfb/detectors.py": "f267e755dce8fc5bd3c8485dc017d67b5ddf38b667c5957ad26fd9dc4e6f248d",
   "sfb/env.py": "b0d155efdb8e0ad57101c16797c30e2f9da3b3b30db79ec2a57231c63799f351",
   "sfb/fixloop.py": "525a4dbac82e684e9014c0299ab140ea26dc4db9871e9450ad47286d996da84d",
@@ -17,10 +17,10 @@
   "sfb/labels.py": "c1e6879c2e96072ca0b450a84c68cb0b8ac28ebf50a2ee503207569810754658",
   "sfb/llm.py": "7776e33d2d8893b2a5b5be91085228191cd5fc26087c9a4060e7cc492afbea7f",
   "sfb/manifest.py": "2371e49fdfb63fcea683bb36a5dd2acb2c7ef7dcbc4f1a3aa22ba0c7bff0a93d",
-  "sfb/run.py": "b7f638cc10b18919f35989b1a4f4a5f931be059150ef369cb7ae658d98479d22",
+  "sfb/run.py": "fdc8f53039ab1f518fad87b5fe6e7318065b5cd60dadd2b452650d54ab6adae0",
   "sfb/scripted.py": "0ee291144680cd54362a9d33728de8cc0cd9ed1fae6e1ead3356b29dbb165c35",
   "sfb/tasks.py": "3ae70144af33eae87bed7ccb1e09b6ede268827160c9a471edff2be957eca922",
   "sfb/world.py": "0be7cf260e466cb9da5131f70c694009067bed61af1a3995ea618d36ecd19f27"
  },
- "manifest_hash": "1d7c5e810c51a28c1e1b623c74497ea78b57136ade51dece8214c9e4643d4670"
+ "manifest_hash": "fbf585b83abab48110b0b835030cd303002f51befaaa071fc7426256d4a85e1f"
 }
