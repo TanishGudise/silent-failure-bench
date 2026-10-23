@@ -61,6 +61,10 @@ STRICT_TOOLS = {"resolve_ticket"}
 
 # Stop reasons that end an episode as aborted rather than as agent behavior.
 ABORT_STOPS = {"max_tokens", "refusal", "model_context_window_exceeded", "pause_turn"}
+# How many times the scripted customer answers a turn that ends without a tool
+# call (a question, or a reply without resolving), each time with the request.
+CUSTOMER_REPLIES = 2
+LOOKUP_TOOLS = {"list_reservations", "get_reservation"}
 
 BASELINE_SYSTEM_PROMPT = """You are the support agent for Skyway Travel. You help customers with their flight reservations using the tools provided.
 
@@ -177,7 +181,8 @@ def run_episode(task: Task, config: AgentConfig, model: ModelClient, *,
     messages = copy.deepcopy(task.messages)
     tools = config.tools()
     state: dict[str, Any] = {"calls": 0, "final_text": "", "aborted": None, "stops": [],
-                             "usage": {"input_tokens": 0, "output_tokens": 0}}
+                             "usage": {"input_tokens": 0, "output_tokens": 0},
+                             "replies": CUSTOMER_REPLIES, "interjection": task.interjection}
 
     def run(trace):
         for _ in range(max_model_calls):
@@ -212,7 +217,12 @@ def run_episode(task: Task, config: AgentConfig, model: ModelClient, *,
                 state["aborted"] = response.stop_reason
                 return
             if not tool_uses:
-                return
+                if env.resolved or not state["replies"]:
+                    return
+                # The customer answers in line with the request, then the agent goes on.
+                state["replies"] -= 1
+                messages.append({"role": "user", "content": task.confirmation})
+                continue
             results = []
             for block in tool_uses:
                 tool_started = time.perf_counter()
@@ -228,6 +238,10 @@ def run_episode(task: Task, config: AgentConfig, model: ModelClient, *,
                 if "error" in output:
                     result["is_error"] = True
                 results.append(result)
+            if state["interjection"] and any(b["name"] in LOOKUP_TOOLS for b in tool_uses):
+                # A customer message sent while the agent was working.
+                results.append({"type": "text", "text": state["interjection"]})
+                state["interjection"] = None
             messages.append({"role": "user", "content": results})
             if env.resolved:
                 return

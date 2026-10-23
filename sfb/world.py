@@ -33,6 +33,17 @@ def human_date(iso: str) -> str:
     return f"{d.strftime('%B')} {d.day}"
 
 
+def ordinal_day(d: date) -> str:
+    """'the 14th': a day of the month the way customers say it."""
+    suffix = "th" if 10 <= d.day % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(d.day % 10, "th")
+    return f"the {d.day}{suffix}"
+
+
+def next_month(d: date) -> date:
+    """Same day of the next month (every day of November and December exists there)."""
+    return d.replace(year=d.year + 1, month=1) if d.month == 12 else d.replace(month=d.month + 1)
+
+
 @dataclass
 class Customer:
     id: str
@@ -119,11 +130,12 @@ def make_reservation(
     *,
     fare_class: str | None = None,
     status: str = "active",
+    origin: str | None = None,
 ) -> Reservation:
     return Reservation(
         id=ids.make("R", 6),
         customer_id=customer.id,
-        origin=rng.choice(HOME),
+        origin=origin or rng.choice(HOME),
         destination=destination,
         depart_date=depart.isoformat(),
         fare_class=fare_class or rng.choice(["refundable", "nonrefundable"]),

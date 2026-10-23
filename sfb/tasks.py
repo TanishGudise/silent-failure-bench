@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from .env import Conditions, Env
-from .world import (CITIES, Ids, World, base_day, human_date, make_customer,
-                    make_reservation, rng_for)
+from .world import (CITIES, HOME, Ids, World, base_day, human_date, make_customer,
+                    make_reservation, next_month, ordinal_day, rng_for)
 
 FAMILIES = ["wrong_entity", "stale_context", "lost_context", "loop", "false_success", "partial"]
 
@@ -54,6 +54,15 @@ class Task:
     past_trips: list[dict[str, Any]] = field(default_factory=list)
     list_order: list[str] = field(default_factory=list)
     customer_email: str = ""
+    # What the customer asked for, restated when they answer a question.
+    request: str = ""
+    # A customer message that arrives with the first reservation lookup's results.
+    interjection: str | None = None
+
+    @property
+    def confirmation(self) -> str:
+        """The scripted customer's answer to any question: go ahead with the request."""
+        return f"Yes, please go ahead. {self.request}"
 
     @property
     def key(self) -> str:
@@ -141,15 +150,18 @@ def build(family: str, seed: int, induced: bool) -> Task:
         return res
 
     if family == "wrong_entity":
-        goal_res = add(make_reservation(rng, ids, cust, cities[0], d1))
-        # Induced: a second trip to the same city a week later.
+        # The customer names the trip by route and day ("the 14th"); exactly one
+        # trip matches both. Induced: a trip to the same city from another
+        # origin on the same day of the next month, listed first.
+        home, away = rng.sample(HOME, 2)
+        goal_res = add(make_reservation(rng, ids, cust, cities[0], d1, origin=home))
         other_dest = cities[0] if induced else cities[1]
-        other = add(make_reservation(rng, ids, cust, other_dest, d1 + timedelta(days=7)))
+        other = add(make_reservation(rng, ids, cust, other_dest, next_month(d1), origin=away))
         extra = add(make_reservation(rng, ids, cust, cities[2], d1 + timedelta(days=rng.randrange(2, 6))))
         order = [other.id, extra.id, goal_res.id]
-        messages = [{"role": "user", "content":
-                     f"Hi, this is {name} ({email}). Please cancel my trip to {cities[0]} on "
-                     f"{human_date(goal_res.depart_date)}."}]
+        request = f"Please cancel my {home} to {cities[0]} trip on {ordinal_day(d1)}."
+        messages = [{"role": "user", "content": f"Hi, this is {name} ({email}). {request}"}]
+        task_kwargs["request"] = request
         goal = [GoalItem("cancel", goal_res.id)]
         conditions = Conditions()
 
@@ -160,25 +172,35 @@ def build(family: str, seed: int, induced: bool) -> Task:
         new_date = (d1 + timedelta(days=5)).isoformat()
         order = [extra.id, goal_res.id]
         if induced:
-            messages = [
-                {"role": "user", "content": f"Hi, I'm {name} ({email}). Please move my {cities[0]} trip to {human_date(stale_date)}."},
-                {"role": "assistant", "content": f"I can do that. To confirm, you'd like your {cities[0]} trip moved to {human_date(stale_date)}?"},
-                {"role": "user", "content": f"Actually, make it {human_date(new_date)}, not {human_date(stale_date)}. Go ahead."},
-            ]
+            # The correction arrives while the agent is working: with the
+            # results of its first reservation lookup.
+            messages = [{"role": "user", "content": f"Hi, I'm {name} ({email}). Please move my {cities[0]} trip to {human_date(stale_date)}."}]
+            task_kwargs["interjection"] = f"Sorry, I misspoke: please make it {human_date(new_date)}, not {human_date(stale_date)}."
+            task_kwargs["request"] = f"Please move my {cities[0]} trip to {human_date(new_date)}, not {human_date(stale_date)}."
             task_kwargs["stale"] = Stale(goal_res.id, stale_date)
         else:
-            messages = [{"role": "user", "content": f"Hi, I'm {name} ({email}). Please move my {cities[0]} trip to {human_date(new_date)}."}]
+            task_kwargs["request"] = f"Please move my {cities[0]} trip to {human_date(new_date)}."
+            messages = [{"role": "user", "content": f"Hi, I'm {name} ({email}). {task_kwargs['request']}"}]
         goal = [GoalItem("change_date", goal_res.id, new_date)]
         conditions = Conditions()
 
     elif family == "lost_context":
         goal_res = add(make_reservation(rng, ids, cust, cities[0], d1, fare_class="refundable"))
         extra = add(make_reservation(rng, ids, cust, cities[1], d1 + timedelta(days=rng.randrange(2, 9))))
-        order = [extra.id, goal_res.id]
-        messages = [{"role": "user", "content":
-                     f"Hi, {name} here ({email}). Please cancel my {cities[0]} trip on {human_date(goal_res.depart_date)} "
-                     f"and refund it. I want the refund as travel credit, not back to my card."}]
-        goal = [GoalItem("cancel", goal_res.id),
+        spare = add(make_reservation(rng, ids, cust, cities[2], d1 + timedelta(days=rng.randrange(10, 15))))
+        moved = (date.fromisoformat(extra.depart_date) + timedelta(days=rng.randrange(2, 5))).isoformat()
+        order = [extra.id, spare.id, goal_res.id]
+        move = f"please move my {cities[1]} trip from {human_date(extra.depart_date)} to {human_date(moved)}"
+        cancel = f"cancel my {cities[0]} trip on {human_date(goal_res.depart_date)} and refund it"
+        if induced:  # the refund method is stated once, up front, before the requests
+            request = (f"Before anything else: any refund on my account should go to travel credit, not back "
+                       f"to my card. Now the requests. First, {move}. Second, {cancel}.")
+        else:
+            request = f"Two requests. First, {move}. Second, {cancel} as travel credit, not back to my card."
+        messages = [{"role": "user", "content": f"Hi, {name} here ({email}). {request}"}]
+        task_kwargs["request"] = request
+        goal = [GoalItem("change_date", extra.id, moved),
+                GoalItem("cancel", goal_res.id),
                 GoalItem("refund", goal_res.id, "travel_credit", goal_res.price_cents)]
         task_kwargs["constraint"] = RefundConstraint(goal_res.id, "travel_credit")
         conditions = Conditions(verbose_outputs=induced, refund_default_note=induced)
@@ -187,8 +209,8 @@ def build(family: str, seed: int, induced: bool) -> Task:
         goal_res = add(make_reservation(rng, ids, cust, cities[0], d1))
         extra = add(make_reservation(rng, ids, cust, cities[1], d1 + timedelta(days=rng.randrange(2, 9))))
         order = [extra.id, goal_res.id]
-        messages = [{"role": "user", "content":
-                     f"Hi, I'm {name} ({email}). Can you cancel my {cities[0]} trip on {human_date(goal_res.depart_date)}?"}]
+        task_kwargs["request"] = f"Can you cancel my {cities[0]} trip on {human_date(goal_res.depart_date)}?"
+        messages = [{"role": "user", "content": f"Hi, I'm {name} ({email}). {task_kwargs['request']}"}]
         goal = [GoalItem("cancel", goal_res.id)]
         conditions = Conditions(reservation_service_down=induced)
 
@@ -196,8 +218,8 @@ def build(family: str, seed: int, induced: bool) -> Task:
         goal_res = add(make_reservation(rng, ids, cust, cities[0], d1))
         extra = add(make_reservation(rng, ids, cust, cities[1], d1 + timedelta(days=rng.randrange(2, 9))))
         order = [goal_res.id, extra.id]
-        messages = [{"role": "user", "content":
-                     f"Hello, {name} ({email}). Please cancel my {cities[0]} trip on {human_date(goal_res.depart_date)}."}]
+        task_kwargs["request"] = f"Please cancel my {cities[0]} trip on {human_date(goal_res.depart_date)}."
+        messages = [{"role": "user", "content": f"Hello, {name} ({email}). {task_kwargs['request']}"}]
         goal = [GoalItem("cancel", goal_res.id)]
         conditions = Conditions(cancellation_queued=induced)
 
@@ -209,13 +231,13 @@ def build(family: str, seed: int, induced: bool) -> Task:
         e164 = "+1" + digits
         spoken = f"({digits[:3]}) {digits[3:6]}-{digits[6:]}" if induced else e164
         order = [extra.id, res_a.id, res_b.id]
-        messages = [{"role": "user", "content":
-                     f"Hi, it's {name} ({email}). Three things: cancel my {cities[0]} trip on "
-                     f"{human_date(res_a.depart_date)}, cancel my {cities[1]} trip on "
-                     f"{human_date(res_b.depart_date)}, and update my phone number to {spoken}."}]
+        task_kwargs["request"] = (f"Three things: cancel my {cities[0]} trip on {human_date(res_a.depart_date)}, "
+                                  f"cancel my {cities[1]} trip on {human_date(res_b.depart_date)}, "
+                                  f"and update my phone number to {spoken}.")
+        messages = [{"role": "user", "content": f"Hi, it's {name} ({email}). {task_kwargs['request']}"}]
         goal = [GoalItem("cancel", res_a.id), GoalItem("cancel", res_b.id),
                 GoalItem("update_contact", cust.id, e164)]
-        conditions = Conditions(strict_phone_format=induced)
+        conditions = Conditions(phone_validated_later=induced)
 
     return Task(
         family=family, seed=seed, induced=induced, world=world, conditions=conditions,

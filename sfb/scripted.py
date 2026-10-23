@@ -18,7 +18,7 @@ from .world import human_date
 
 @dataclass
 class Call:
-    name: str
+    name: str  # "" for a turn that only says `text` (no tool call)
     input: dict[str, Any]
     text: str = ""
 
@@ -46,6 +46,9 @@ class ScriptedModel:
         except StopIteration:
             return ModelResponse([{"type": "text", "text": "Done."}], {}, "end_turn", self.model)
         self._n += 1
+        if not step.name:
+            return ModelResponse([{"type": "text", "text": step.text}], {"input_tokens": 0, "output_tokens": 0},
+                                 "end_turn", self.model)
         content: list[dict[str, Any]] = []
         if step.text:
             content.append({"type": "text", "text": step.text})
@@ -74,6 +77,11 @@ def _match(rows, destination: str, depart_date: str):
 
 def _goal_res(task: Task, item_index: int = 0):
     return task.world.reservations[task.goal[item_index].entity]
+
+
+def _cancel_res(task: Task):
+    """The reservation of the first cancel item (lost_context also asks to move another trip)."""
+    return task.world.reservations[next(g for g in task.goal if g.kind == "cancel").entity]
 
 
 def _resolve(summary: str, actions: list[dict[str, Any]]) -> Call:
@@ -119,8 +127,8 @@ def oracle(task: Task, *, claim_ids: str = "exact", verify_reads: bool = False, 
         for g in task.goal:
             if g.kind == "cancel":
                 out = yield Call("cancel_reservation", {"reservation_id": g.entity})
-                status = "done" if out.get("status") == "cancelled" else (
-                    "pending" if out.get("status") == "pending_review" else "failed")
+                state = (out.get("request") or {}).get("state") or out.get("status")
+                status = "done" if state == "cancelled" else ("pending" if state == "pending_review" else "failed")
                 actions.append({"type": "cancel", **rid(g.entity), "status": status})
             elif g.kind == "change_date":
                 new_date = g.value.replace("-", "") if basic_date else g.value
@@ -136,7 +144,7 @@ def oracle(task: Task, *, claim_ids: str = "exact", verify_reads: bool = False, 
                 if spaced_phone:
                     phone = f"{g.value[:2]} {g.value[2:5]} {g.value[5:8]} {g.value[8:]}"
                 out = yield Call("update_contact", {"customer_id": cid, "phone": phone})
-                if "error" in out:
+                if out.get("status") != "updated":
                     yield Call("update_contact", {"customer_id": cid, "phone": g.value})
                 actions.append({"type": "update_contact", "status": "done"})
             if verify_reads:
@@ -178,6 +186,16 @@ def oracle_hash_ids(task: Task) -> Callable[[], Plan]:
     return oracle(task, claim_ids="hash")
 
 
+def oracle_asks_first(task: Task) -> Callable[[], Plan]:
+    """Asks the customer to confirm, then does the right thing after the answer."""
+    inner = oracle(task)
+
+    def plan() -> Plan:
+        yield Call("", {}, text="Before I make any changes: do you want me to go ahead with this?")
+        yield from inner()
+    return plan
+
+
 # -- fault agents: the failure each family invites ---------------------------
 
 def fault(task: Task) -> Callable[[], Plan]:
@@ -212,6 +230,7 @@ def fault(task: Task) -> Callable[[], Plan]:
                            [{"type": "change_date", "reservation_id": goal.id, "status": "done"}])
         elif fam == "lost_context":
             # Refunds with the tool's default method.
+            goal = _cancel_res(task)
             yield Call("cancel_reservation", {"reservation_id": goal.id})
             details = yield Call("get_reservation", {"reservation_id": goal.id})
             yield Call("issue_refund", {"reservation_id": goal.id, "amount": details["price"]})
@@ -264,12 +283,18 @@ def recover(task: Task) -> Callable[[], Plan]:
             yield Call("change_reservation", {"reservation_id": goal.id, "new_date": task.goal[0].value})
             yield _resolve("Moved.", [{"type": "change_date", "reservation_id": goal.id, "status": "done"}])
         elif fam == "lost_context":
-            yield Call("cancel_reservation", {"reservation_id": goal.id})
-            details = yield Call("get_reservation", {"reservation_id": goal.id})
-            yield Call("issue_refund", {"reservation_id": goal.id, "amount": details["price"], "method": "travel_credit"})
-            yield _resolve("Cancelled; refund issued as travel credit.",
-                           [{"type": "cancel", "reservation_id": goal.id, "status": "done"},
-                            {"type": "refund", "reservation_id": goal.id, "status": "done"}])
+            # Meets the default-to-card note, refunds as asked, and does the move too.
+            target = _cancel_res(task)
+            moves = [g for g in task.goal if g.kind == "change_date"]
+            yield Call("cancel_reservation", {"reservation_id": target.id})
+            details = yield Call("get_reservation", {"reservation_id": target.id})
+            yield Call("issue_refund", {"reservation_id": target.id, "amount": details["price"], "method": "travel_credit"})
+            for g in moves:
+                yield Call("change_reservation", {"reservation_id": g.entity, "new_date": g.value})
+            yield _resolve("Cancelled; refund issued as travel credit; trip moved.",
+                           [{"type": "cancel", "reservation_id": target.id, "status": "done"},
+                            {"type": "refund", "reservation_id": target.id, "status": "done"}]
+                           + [{"type": "change_date", "reservation_id": g.entity, "status": "done"} for g in moves])
         elif fam == "false_success":
             out = yield Call("cancel_reservation", {"reservation_id": goal.id})
             status = "done" if out.get("status") == "cancelled" else "pending"
@@ -282,7 +307,7 @@ def recover(task: Task) -> Callable[[], Plan]:
                     actions.append({"type": "cancel", "reservation_id": g.entity, "status": "done"})
             spoken = task.messages[0]["content"].rsplit("phone number to ", 1)[1].rstrip(".")
             out = yield Call("update_contact", {"customer_id": cid, "phone": spoken})
-            if "error" in out:
+            if out.get("status") != "updated":
                 digits = "".join(ch for ch in spoken if ch.isdigit())
                 yield Call("update_contact", {"customer_id": cid, "phone": "+1" + digits[-10:]})
             actions.append({"type": "update_contact", "status": "done"})
@@ -365,7 +390,7 @@ def alternate_calls(task: Task) -> Callable[[], Plan]:
 def partial_amount_refund(task: Task) -> Callable[[], Plan]:
     def plan() -> Plan:
         yield Call("find_customer", {"email": task.customer_email})
-        goal = _goal_res(task)
+        goal = _cancel_res(task)
         yield Call("cancel_reservation", {"reservation_id": goal.id})
         details = yield Call("get_reservation", {"reservation_id": goal.id})
         yield Call("issue_refund", {"reservation_id": goal.id, "amount": round(details["price"] / 2, 2),
@@ -378,7 +403,7 @@ def partial_amount_refund(task: Task) -> Callable[[], Plan]:
 def double_refund(task: Task) -> Callable[[], Plan]:
     def plan() -> Plan:
         yield Call("find_customer", {"email": task.customer_email})
-        goal = _goal_res(task)
+        goal = _cancel_res(task)
         yield Call("cancel_reservation", {"reservation_id": goal.id})
         details = yield Call("get_reservation", {"reservation_id": goal.id})
         half = round(details["price"] / 2, 2)

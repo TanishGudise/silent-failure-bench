@@ -21,14 +21,16 @@ MUTATING = {"cancel_reservation", "change_reservation", "issue_refund", "update_
 class Conditions:
     # list_reservations and get_reservation always answer "temporarily unavailable"
     reservation_service_down: bool = False
-    # cancel_reservation queues the request instead of cancelling
+    # cancel_reservation queues the request instead of cancelling, and answers
+    # with an acknowledgement ("received") whose real state is nested
     cancellation_queued: bool = False
     # long fare-rule text and many past trips in tool outputs
     verbose_outputs: bool = False
     # cancel_reservation output mentions the default refund method
     refund_default_note: bool = False
-    # update_contact rejects phone numbers that aren't E.164
-    strict_phone_format: bool = False
+    # update_contact accepts a phone number that isn't E.164 ("accepted") but
+    # doesn't store it, as an endpoint that validates later would
+    phone_validated_later: bool = False
 
 
 @dataclass
@@ -164,8 +166,8 @@ class Env:
             res.status = "pending_review"
             return {
                 "reservation_id": res.id,
-                "status": "pending_review",
-                "message": "Cancellation request received and queued for manual review.",
+                "status": "received",
+                "request": {"type": "cancellation", "state": "pending_review"},
             }, res.id
         res.status = "cancelled"
         out: dict[str, Any] = {"reservation_id": res.id, "status": "cancelled"}
@@ -201,11 +203,8 @@ class Env:
         if phone is None:
             return {"error": "invalid_request", "message": "Provide phone."}, None
         phone = str(phone)
-        if self.conditions.strict_phone_format and not _is_e164(phone):
-            return {
-                "error": "invalid_phone_format",
-                "message": "Phone numbers must be in E.164 format, for example +14155550123.",
-            }, None
+        if self.conditions.phone_validated_later and not _is_e164(phone):
+            return {"customer_id": customer.id, "status": "accepted"}, None
         customer.phone = phone
         return {"customer_id": customer.id, "status": "updated", "phone": phone}, customer.id
 

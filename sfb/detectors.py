@@ -225,8 +225,9 @@ def compact_view(payload: dict[str, Any]) -> dict[str, Any]:
 
     Each generation span stores the whole prompt so far, so the raw trace
     grows with the square of the number of model calls. This view keeps the
-    customer's opening messages once, then every model reply and tool call in
-    order, then the final output: the same information, each piece once.
+    customer's opening messages once, then every model reply, tool call and
+    later customer message in order, then the final output: the same
+    information, each piece once.
     """
     trace = payload["trace"]
     spans = trace.get("spans", [])
@@ -236,8 +237,13 @@ def compact_view(payload: dict[str, Any]) -> dict[str, Any]:
         opening = [m for m in generations[0].get("input") or []
                    if isinstance(m, dict) and m.get("role") != "system"]
     steps: list[dict[str, Any]] = []
+    seen = None  # messages in the previous generation's prompt
     for span in spans:
         if span.get("type") == "generation":
+            prompt = span.get("input") or []
+            if seen is not None:  # customer messages that arrived since the last model call
+                steps.extend({"customer": text} for message in prompt[seen:] for text in _customer_text(message))
+            seen = len(prompt)
             steps.append({"agent": span.get("output")})
         elif span.get("type") == "tool":
             step = {"tool": span.get("name"), "input": span.get("input"), "output": span.get("output")}
@@ -246,6 +252,15 @@ def compact_view(payload: dict[str, Any]) -> dict[str, Any]:
             steps.append(step)
     return {"agent_name": trace.get("name"), "conversation": opening, "steps": steps,
             "final_output": trace.get("output")}
+
+
+def _customer_text(message: Any) -> list[str]:
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return []
+    content = message.get("content")
+    if isinstance(content, str):
+        return [content]
+    return [b["text"] for b in content or [] if isinstance(b, dict) and b.get("type") == "text"]
 
 
 def judge_input(payload: dict[str, Any]) -> str:

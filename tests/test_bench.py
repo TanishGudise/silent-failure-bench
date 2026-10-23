@@ -416,6 +416,74 @@ def test_report_flags_a_family_whose_episodes_all_errored(tmp_path, monkeypatch,
     assert "  partial        2/5" in section and "wrong_entity" not in section
 
 
+def test_the_customer_answers_questions_with_the_request_twice_at_most():
+    task = build("false_success", 0, False)
+    asks = _Scripted([([{"type": "text", "text": "Shall I go ahead?"}], "end_turn")] * 3)
+    ep = run_episode(task, AgentConfig(), asks)
+    replies = [m["content"] for m in ep.trace["trace"]["spans"][-1]["input"] if m["role"] == "user"][1:]
+    assert replies == [task.confirmation] * 2 and task.request in task.confirmation
+    assert ep.model_calls == 3 and ep.labels.primary == "unresolved"
+    view = detectors.compact_view(ep.trace)
+    assert [s["customer"] for s in view["steps"] if "customer" in s] == [task.confirmation] * 2
+
+
+def test_the_correction_arrives_with_the_first_lookup_once():
+    task = build("stale_context", 0, True)
+    cid = task.world.reservations[task.goal[0].entity].customer_id
+    model = _Scripted([
+        ([_tool("find_customer", {"email": task.customer_email})], "tool_use"),
+        ([_tool("list_reservations", {"customer_id": cid}, 2)], "tool_use"),
+        ([_tool("get_reservation", {"reservation_id": task.goal[0].entity}, 3)], "tool_use"),
+        ([_tool("change_reservation", {"reservation_id": task.goal[0].entity, "new_date": task.stale.date}, 4)],
+         "tool_use"),
+        ([_tool("resolve_ticket", {"summary": "Moved.", "actions": [
+            {"type": "change_date", "reservation_id": task.goal[0].entity, "status": "done"}]}, 5)], "tool_use"),
+    ])
+    ep = run_episode(task, AgentConfig(), model)
+    assert ep.labels.primary == "stale_context"
+    prompt = ep.trace["trace"]["spans"][-2]["input"]  # the last generation's prompt
+    texts = [b["text"] for m in prompt if m["role"] == "user" and isinstance(m["content"], list)
+             for b in m["content"] if b.get("type") == "text"]
+    assert texts == [task.interjection]
+    # It follows the list_reservations result, and the judges see it.
+    turn = next(m["content"] for m in prompt if m["role"] == "user" and isinstance(m["content"], list)
+                and any(b.get("type") == "text" for b in m["content"]))
+    assert turn[0]["type"] == "tool_result" and turn[-1]["text"] == task.interjection
+    assert {"customer": task.interjection} in detectors.compact_view(ep.trace)["steps"]
+
+
+def test_strengthened_outputs_look_like_success():
+    task = build("false_success", 0, True)
+    env = task.make_env()
+    out = env.call("cancel_reservation", {"reservation_id": task.goal[0].entity})
+    assert out["status"] == "received" and out["request"]["state"] == "pending_review"
+    task = build("partial", 0, True)
+    env = task.make_env()
+    spoken = task.messages[0]["content"].rsplit("phone number to ", 1)[1].rstrip(".")
+    cid = task.goal[2].entity
+    assert env.call("update_contact", {"customer_id": cid, "phone": spoken}) == {"customer_id": cid,
+                                                                               "status": "accepted"}
+    assert env.world.customers[cid].phone != task.goal[2].value
+    assert env.call("update_contact", {"customer_id": cid, "phone": task.goal[2].value})["status"] == "updated"
+
+
+@pytest.mark.parametrize("induced", [True, False])
+def test_the_14th_names_exactly_one_trip(induced):
+    from datetime import date
+
+    for seed in range(40):
+        task = build("wrong_entity", seed, induced)
+        goal = task.world.reservations[task.goal[0].entity]
+        text = task.messages[0]["content"]
+        day = date.fromisoformat(goal.depart_date).day
+        matches = [r for r in task.world.reservations.values()
+                   if f"my {r.origin} to {r.destination} trip" in text and date.fromisoformat(r.depart_date).day == day]
+        assert matches == [goal], (seed, text)
+        decoy = task.world.reservations[task.list_order[0]]
+        assert date.fromisoformat(decoy.depart_date).day == day and decoy.origin != goal.origin
+        assert (decoy.destination == goal.destination) is induced
+
+
 def test_key_and_spend_limit_refusals_stop_on_any_4xx():
     from sfb import run as runner
 
