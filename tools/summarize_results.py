@@ -64,9 +64,11 @@ def main() -> None:
     verdicts = [json.loads(line) for line in (RUNS / "cp3" / "detect.jsonl").read_text().splitlines() if line.strip()]
     final = {v["key"]: v for v in verdicts}  # the last row per key wins (retries)
     partial_keys = {r["key"] for r in bench if r["label"] == "partial"}
-    cites_accepted = {det: sum("accepted" in (v.get("reasons") or [""])[0].lower() for v in final.values()
-                               if v["episode"] in partial_keys and v["detector"] == det and "flag" in v)
-                      for det in ("d1", "d1s")}
+    cites_accepted = {}
+    for det in ("d1", "d1s"):
+        judged = [v for v in final.values() if v["episode"] in partial_keys and v["detector"] == det and "flag" in v]
+        cites = sum("accepted" in (v.get("reasons") or [""])[0].lower() for v in judged)
+        cites_accepted[det] = f"{cites}/{len(judged)}"
     loop_runs = [r for r in records if r["family"] == "loop"]
     loop_pos = [r for r in loop_runs if r["induced"] and r["label"] == "loop"]
     loop_clean = [r for r in loop_runs if not r["induced"] and r["label"] == "clean"]
@@ -101,7 +103,7 @@ def main() -> None:
                    "cp3-controls": labels("cp3-controls")},
         "detectors_cp3": detectors,
         "detector_tables_cp3_bench": {det: detector_table(bench, det) for det in ("d1", "d1s", "d1b", "d2", "d3")},
-        "partial_verdicts_citing_accepted": {det: f"{n}/44" for det, n in cites_accepted.items()},
+        "partial_verdicts_citing_accepted": cites_accepted,
         "retry_task": retry,
         "judge_cost_per_1000_traces_usd_as_booked": cost_per_1k,
         "fix_loop": {k: fixloop[k] for k in ("fixes", "replay_false_pass", "gates", "fixer_failures")},

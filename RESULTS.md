@@ -19,7 +19,7 @@ Agent: Claude Haiku 5.5 on the support desk described in the README. Every episo
 | Trace rules | 44/44 | 43/43 | 5/165 | none |
 | Read-only state check | 44/44 | 0/43 (by design) | 0/165 | none |
 
-Costs are booked spend per trace judged, including calls that timed out and were charged at the gateway's cap. The generic judges see the evidence: 44/44 Haiku verdicts and 43/44 Sonnet verdicts on the phone-update episodes cite the "accepted" reply and still judge the done report correct. On loops, both judges argued that bounded retries of a "please retry" error are reasonable, which is a fair objection to the label.
+Costs are booked spend per trace judged, including failed calls (timeouts and dropped connections), each booked at the gateway's per-call maximum. The generic judges see the evidence: 44/44 Haiku verdicts and 43/44 Sonnet verdicts on the phone-update episodes cite the "accepted" reply and still judge the done report correct. On loops, both judges argued that bounded retries of a "please retry" error are reasonable, which is a fair objection to the label.
 
 ## Fix loop (CP5: 12 fixes, 20 held-out and 20 regression cases each, null arm = the unchanged agent)
 
