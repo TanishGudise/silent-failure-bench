@@ -7,8 +7,9 @@ max_tokens of output) and refuses any request that could push spend past the
 cap. After the response it books the real cost from `usage` and releases the
 reservation. If anything goes wrong after the request was sent (the
 connection drops, the body is cut off or unreadable, a success reply has no
-usage, or a 500/502/504 arrives), it books the full reservation, since the
-call may have been billed. Only 429, 503 and 529 replies, which aren't billed,
+usage or unreadable usage, a non-standard service tier or non-global
+inference_geo, or a 500/502/504 arrives), it books the full reservation,
+since the call may have been billed at a rate it can't price. Only 429, 503 and 529 replies, which aren't billed,
 are retried here, at most twice, and every attempt is written to the ledger. The key is read from a gitignored
 .env and never logged. Callers must present the gateway token, and only the
 request fields the harness uses are forwarded.
@@ -68,11 +69,20 @@ def worst_case_usd(model: str, body: bytes, max_tokens: int) -> float:
     return (prompt_bound * rate_in + max_tokens * rate_out) / 1e6
 
 
+def _count(value: object) -> int:
+    """A token count from `usage`; anything but a non-negative integer is unreadable."""
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"unreadable token count {value!r}")
+    return value
+
+
 def actual_usd(model: str, usage: dict) -> float:
-    uncached = int(usage.get("input_tokens") or 0)
-    written = int(usage.get("cache_creation_input_tokens") or 0)
-    read = int(usage.get("cache_read_input_tokens") or 0)
-    out = int(usage.get("output_tokens") or 0)
+    uncached = _count(usage.get("input_tokens"))
+    written = _count(usage.get("cache_creation_input_tokens"))
+    read = _count(usage.get("cache_read_input_tokens"))
+    out = _count(usage.get("output_tokens"))
     rate_in, rate_out = rates(model, uncached + written + read)
     return (uncached * rate_in + written * rate_in * CACHE_WRITE + read * rate_in * CACHE_READ
             + out * rate_out) / 1e6
@@ -187,9 +197,14 @@ def make_handler(meter: Meter, key: str, upstream: str, token: str):
                     continue
                 try:
                     tier = usage.get("service_tier") if usage else None
+                    geo = usage.get("inference_geo") if usage else None
                     usd, note = (actual_usd(model, usage), "") if usage else (None, "")
+                    # Priced at list rates only for standard, global inference;
+                    # anything else may carry a premium, so book the bound.
                     if tier not in (None, "standard"):
                         usd, note = bound, f"unexpected service tier {tier}"
+                    elif geo not in (None, "global"):
+                        usd, note = bound, f"unexpected inference_geo {geo}"
                 except (TypeError, ValueError, AttributeError):
                     usd, note = bound, "unreadable usage"
                 if usd is None:

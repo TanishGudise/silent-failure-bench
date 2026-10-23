@@ -1,5 +1,6 @@
 """Command line runner. Paid commands talk only to the local gateway.
 
+  smoke     one paid episode, then reconcile its tokens with the console
   episodes  run agent episodes        (paid)
   detect    run detectors on a run    (D1/D1b paid, D2/D3 free)
   fixloop   propose and check fixes   (paid)
@@ -13,16 +14,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 from . import detectors, fixloop, scripted
 from .agent import AgentConfig, run_episode
-from .analysis import detector_table, fmt, prevalence, wilson
+from .analysis import detector_table, fmt, prevalence, rate, wilson
 from .gateway import PRICES
+from .labels import NOT_SCORED
 from .tasks import FAMILIES, Task, build
 from .world import Customer, Refund, Reservation, World
 
@@ -31,6 +33,12 @@ MAX_MODEL_CALLS = 10
 AGENT_MAX_TOKENS = 4096
 JUDGE_MAX_TOKENS = 2048
 FIXER_MAX_TOKENS = 8192
+SMOKE_TASK = ("false_success", 0, False)
+TOTAL_BUDGET_USD = 20.0
+# Errors that would repeat on every call stop a run instead of being stored.
+STOP_STATUSES = {401, 403}
+STOP_PHRASES = ("usage limit", "spend limit", "credit balance")
+MAX_ERRORS_IN_A_ROW = 5
 
 
 def parse_range(text: str) -> range:
@@ -68,12 +76,13 @@ def world_from(snapshot: dict[str, Any]) -> World:
     )
 
 
-class BudgetExhausted(SystemExit):
+class RunStopped(SystemExit):
     pass
 
 
-def preflight() -> str:
-    """Paid commands run only on the frozen code, after the gate passed on it."""
+def preflight(require_smoke: bool = True) -> str:
+    """Paid commands run only on the frozen code, after the gate passed on it
+    and the smoke episode's tokens matched the console."""
     from .manifest import ROOT, compute
 
     current = compute()
@@ -86,6 +95,11 @@ def preflight() -> str:
     passed = json.loads(marker.read_text()) if marker.exists() else {}
     if passed.get("manifest_hash") != current["manifest_hash"] or passed.get("seeds", 0) < 40:
         raise SystemExit("run `python -m sfb.gate --seeds 40` on the frozen code first")
+    smoke_path = RUNS / "smoke.json"
+    smoke = json.loads(smoke_path.read_text()) if smoke_path.exists() else {}
+    if require_smoke and not (smoke.get("confirmed") is True
+                              and smoke.get("manifest_hash") == current["manifest_hash"]):
+        raise SystemExit("run `smoke` and confirm its tokens against the console on the frozen code first")
     return current["manifest_hash"]
 
 
@@ -95,15 +109,60 @@ def model_for(gateway: str, run: str, effort: str | None = None):
     return AnthropicModel(gateway, run=run, effort=effort)
 
 
-def _is_budget_refusal(exc: Exception) -> bool:
-    return "budget cap reached" in str(exc)
+def stop_reason(exc: Exception) -> str | None:
+    """Why an error should stop the run rather than be stored, if it should."""
+    text = str(exc)
+    if "budget cap reached" in text:
+        return "budget cap reached"
+    status = getattr(exc, "status_code", None)
+    if status in STOP_STATUSES:
+        return f"upstream refused the key ({status})"
+    if status == 400 and any(phrase in text.lower() for phrase in STOP_PHRASES):
+        return "upstream usage or spend limit reached"
+    return None
+
+
+class Stopper:
+    """Stops a run on a budget refusal, an upstream key or spend-limit
+    refusal (nothing stored), or MAX_ERRORS_IN_A_ROW errors in a row (stored)."""
+
+    def __init__(self) -> None:
+        self.event = threading.Event()
+        self.lock = threading.Lock()
+        self.reason = ""
+        self.streak = 0
+
+    def _stop(self, reason: str) -> None:
+        if not self.event.is_set():
+            self.reason = reason
+            self.event.set()
+
+    def error(self, exc: Exception) -> bool:
+        """Count an error; False if it's a stop and must not be stored."""
+        reason = stop_reason(exc)
+        with self.lock:
+            if reason:
+                self._stop(reason)
+                return False
+            self.streak += 1
+            if self.streak >= MAX_ERRORS_IN_A_ROW:
+                self._stop(f"{self.streak} errors in a row (last: {type(exc).__name__})")
+            return True
+
+    def ok(self) -> None:
+        with self.lock:
+            self.streak = 0
+
+    def check(self, saved: str) -> None:
+        if self.event.is_set():
+            raise RunStopped(f"{self.reason}: stopped; completed {saved} are saved")
 
 
 def run_episodes(store: Store, jobs: Iterable[tuple[Task, AgentConfig, int]], gateway: str,
                  run: str, workers: int, manifest_hash: str,
                  retry_errors: bool = False) -> list[dict[str, Any]]:
     model = model_for(gateway, run)
-    stop = threading.Event()
+    stopper = Stopper()
     todo = []
     retried = []
     for task, config, rep in jobs:
@@ -119,25 +178,110 @@ def run_episodes(store: Store, jobs: Iterable[tuple[Task, AgentConfig, int]], ga
                 handle.write(json.dumps(entry) + "\n")
 
     def one(item):
-        if stop.is_set():
+        if stopper.event.is_set():
             return
         key, task, config = item
         try:
             episode = run_episode(task, config, model, max_model_calls=MAX_MODEL_CALLS,
                                   max_tokens=AGENT_MAX_TOKENS)
         except Exception as exc:
-            if _is_budget_refusal(exc):
-                stop.set()  # not the agent's doing: stop, store nothing, resume under a new cap
-                return
-            store.add({"key": key, "manifest": manifest_hash, "error": f"{type(exc).__name__}: {exc}"[:500]})
+            # A budget or key refusal isn't the agent's doing: stop, store nothing.
+            if stopper.error(exc):
+                store.add({"key": key, "manifest": manifest_hash, "error": f"{type(exc).__name__}: {exc}"[:500]})
             return
+        stopper.ok()
         store.add({"key": key, "manifest": manifest_hash, "record": episode.record(), "trace": episode.trace})
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         list(pool.map(one, todo))
-    if stop.is_set():
-        raise BudgetExhausted("budget cap reached: stopped; completed episodes are saved")
+    stopper.check("episodes")
     return [store.rows[f"{t.key}|{c.fingerprint}|{r}"] for t, c, r in jobs]
+
+
+def episode_jobs(families: list[str], seeds: range, variants: list[bool],
+                 config: AgentConfig) -> list[tuple[Task, AgentConfig, int]]:
+    """Seed-major, so a run stopped at its cap leaves every family with the same seeds."""
+    return [(build(f, s, v), config, 0) for s in seeds for f in families for v in variants]
+
+
+def seed_major(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Episode rows in the order the bench ran them (errored rows last)."""
+    def order(row: dict[str, Any]) -> tuple:
+        rec = row.get("record")
+        if rec is None:
+            return (1, 0, 0, False)
+        return (0, rec["seed"], FAMILIES.index(rec["family"]), not rec["induced"])
+    return sorted(rows, key=order)
+
+
+def ledger_rows(ledger: Path) -> list[dict[str, Any]]:
+    if not ledger.exists():
+        return []
+    return [json.loads(line) for line in ledger.read_text().splitlines() if line.strip()]
+
+
+def ledger_totals(ledger: Path, tag: str) -> dict[str, Any]:
+    """Requests, tokens and spend booked under one run tag."""
+    rows = [r for r in ledger_rows(ledger) if r.get("run") == tag]
+    tokens_in = tokens_out = 0
+    notes = []
+    for r in rows:
+        usage = r.get("usage") or {}
+        try:
+            tokens_in += sum(int(usage.get(k) or 0) for k in
+                             ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+            tokens_out += int(usage.get("output_tokens") or 0)
+        except (TypeError, ValueError, AttributeError):
+            notes.append("unreadable usage")
+        if r.get("note") and r["note"] != "unbilled error reply; retrying":
+            notes.append(r["note"])
+    return {"requests": len(rows), "input_tokens": tokens_in, "output_tokens": tokens_out,
+            "usd": round(sum(r["usd"] for r in rows), 6), "notes": notes}
+
+
+def cmd_smoke(args) -> None:
+    """Before the pilot: one paid episode, as the workspace's first call; then
+    its ledger tokens must equal the console's (Usage page) exactly."""
+    path = RUNS / "smoke.json"
+    tag = f"{args.run}-smoke"
+    ledger = Path(args.ledger)
+    if not args.console_tokens:
+        if not args.gateway:
+            raise SystemExit("--gateway is required to run the smoke episode")
+        manifest_hash = preflight(require_smoke=False)
+        store = Store(RUNS / args.run / "smoke_episodes.jsonl")
+        (row,) = run_episodes(store, [(build(*SMOKE_TASK), AgentConfig(), 0)], args.gateway, tag, 1,
+                              manifest_hash)
+        totals = ledger_totals(ledger, tag)
+        path.write_text(json.dumps({"manifest_hash": manifest_hash, "run": args.run, "ledger": totals,
+                                    "episode_ok": "record" in row, "confirmed": False}, indent=1))
+        print(json.dumps(totals, indent=1))
+        print("Read the workspace's input and output tokens on the console's Usage page, then run "
+              f"`smoke --run {args.run} --ledger {args.ledger} --console-tokens IN,OUT --spend-limit USD`.")
+        return
+    saved = json.loads(path.read_text())
+    totals = ledger_totals(ledger, tag)
+    console = tuple(int(x) for x in args.console_tokens.split(","))
+    problems = []
+    if totals != saved["ledger"]:
+        problems.append("the ledger changed since the smoke episode")
+    if not saved.get("episode_ok"):
+        problems.append("the smoke episode errored")
+    if not totals["requests"]:
+        problems.append("no smoke requests in the ledger")
+    if console != (totals["input_tokens"], totals["output_tokens"]):
+        problems.append(f"console tokens {console} != ledger {(totals['input_tokens'], totals['output_tokens'])}")
+    if totals["notes"]:
+        problems.append(f"gateway booked a bound: {totals['notes']}")
+    if args.spend_limit is None or not 0 < args.spend_limit <= TOTAL_BUDGET_USD:
+        problems.append(f"record the workspace's console spend limit (0 < limit <= ${TOTAL_BUDGET_USD:.0f})")
+    saved.update({"console_tokens": list(console), "spend_limit_usd": args.spend_limit,
+                  "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  "problems": problems, "confirmed": not problems})
+    path.write_text(json.dumps(saved, indent=1))
+    print("SMOKE OK" if not problems else "STOP: " + "; ".join(problems))
+    if problems:
+        raise SystemExit(1)
 
 
 def cmd_episodes(args) -> None:
@@ -151,8 +295,7 @@ def cmd_episodes(args) -> None:
         {"system_prompt": config.system_prompt, "tools": config.tool_descriptions,
          "fingerprint": config.fingerprint, "manifest_hash": compute()["manifest_hash"]}, indent=1))
     variants = [v == "induced" for v in args.variants.split(",")]
-    jobs = [(build(f, s, v), config, 0) for f in args.families.split(",")
-            for s in parse_range(args.seeds) for v in variants]
+    jobs = episode_jobs(args.families.split(","), parse_range(args.seeds), variants, config)
     rows = run_episodes(store, jobs, args.gateway, args.run, args.workers, manifest_hash, args.retry_errors)
     errors = [r for r in rows if "error" in r]
     print(f"{len(rows)} episodes, {len(errors)} errors")
@@ -167,13 +310,20 @@ def cmd_detect(args) -> None:
         raise SystemExit("--gateway is required for d1/d1b")
     manifest_hash = preflight() if paid else compute()["manifest_hash"]
     episodes = Store(RUNS / args.run / "episodes.jsonl")
-    out = Store(RUNS / args.run / f"detect.jsonl")
+    out = Store(RUNS / args.run / "detect.jsonl")
     instructions = json.loads((RUNS / args.run / "config.json").read_text())["system_prompt"]
     models = {name: model_for(args.gateway, f"{args.run}-{name}") for name in ("d1", "d1b") if name in wanted}
-    stop = threading.Event()
+    stopper = Stopper()
+    if args.retry_errors:  # every re-run of an errored detector call is logged
+        retried = [{"key": k, "detector": r["detector"], "previous_error": r["error"]}
+                   for k, r in out.rows.items() if "error" in r and r["detector"] in wanted]
+        if retried:
+            with open(RUNS / args.run / "retries.jsonl", "a") as handle:
+                for entry in retried:
+                    handle.write(json.dumps(entry) + "\n")
 
     def one(row):
-        if "error" in row or stop.is_set():
+        if "error" in row or stopper.event.is_set():
             return
         for name in wanted:
             key = f"{row['key']}|{name}"
@@ -191,12 +341,14 @@ def cmd_detect(args) -> None:
                     answer, usage, stop_reason = models[name].complete_json(
                         system=system, user=user, schema=schema, max_tokens=JUDGE_MAX_TOKENS)
                 except Exception as exc:
-                    if _is_budget_refusal(exc):
-                        stop.set()
+                    if not stopper.error(exc):
                         return
                     out.add({"key": key, "episode": row["key"], "detector": name, "manifest": manifest_hash,
                              "error": f"{type(exc).__name__}: {exc}"[:300]})
+                    if stopper.event.is_set():
+                        return
                     continue
+                stopper.ok()
                 if answer is None:
                     out.add({"key": key, "episode": row["key"], "detector": name, "manifest": manifest_hash,
                              "error": stop_reason, "usage": usage})
@@ -206,9 +358,8 @@ def cmd_detect(args) -> None:
                      "flag": v.flag, "family": v.family, "reasons": v.reasons, "usage": usage})
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        list(pool.map(one, list(episodes.rows.values())))
-    if stop.is_set():
-        raise BudgetExhausted("budget cap reached: stopped; completed verdicts are saved")
+        list(pool.map(one, seed_major(episodes.rows.values())))
+    stopper.check("verdicts")
     print(f"{len(out.rows)} detector results")
 
 
@@ -262,8 +413,9 @@ def cmd_fixloop(args) -> None:
                     answer, usage, stop = fixer.complete_json(system=system, user=user, schema=fixloop.FIXER_SCHEMA,
                                                               max_tokens=FIXER_MAX_TOKENS)
                 except Exception as exc:
-                    if _is_budget_refusal(exc):
-                        raise BudgetExhausted("budget cap reached at the fixer call") from exc
+                    reason = stop_reason(exc)
+                    if reason:
+                        raise RunStopped(f"{reason} at the fixer call: stopped") from exc
                     # Transport or API error: nothing stored, so the next run retries it.
                     print(f"{key}: fixer call failed ({type(exc).__name__}); re-run to retry")
                     fixer_failures[trig["key"]] = f"call failed: {type(exc).__name__}"
@@ -368,9 +520,27 @@ def union(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def cost_per_1k(ledger: Path, run: str, detector: str, traces: int) -> float | None:
     if not ledger.exists() or not traces:
         return None
-    spent = sum(e["usd"] for e in map(json.loads, ledger.read_text().splitlines())
-                if e.get("run") == f"{run}-{detector}")
+    spent = sum(e["usd"] for e in ledger_rows(ledger) if e.get("run") == f"{run}-{detector}")
     return round(spent / traces * 1000, 4)
+
+
+def spend_report(ledger: Path, run: str, agent_episodes: int, console_usd: float | None) -> None:
+    """Booked spend per run tag, the mean agent cost per episode (the CP5
+    cut), and, given the console's cost, the post-pilot dollar check."""
+    rows = [e for e in ledger_rows(ledger) if e.get("run") == run or str(e.get("run")).startswith(run + "-")]
+    per_tag: dict[str, list[float]] = {}
+    for e in rows:
+        per_tag.setdefault(e["run"], []).append(e["usd"])
+    for tag, usd in sorted(per_tag.items()):
+        print(f"spend {tag:22s} ${sum(usd):.4f} over {len(usd)} ledger rows")
+    if agent_episodes:
+        mean = sum(per_tag.get(run, [])) / agent_episodes
+        print(f"mean agent cost per episode: ${mean:.5f} (CP5 uses one trigger per family above $0.0055)")
+    total = sum(e["usd"] for e in rows)
+    print(f"booked total: ${total:.4f}")
+    if console_usd is not None:
+        ok = console_usd <= total * 1.10
+        print(f"console ${console_usd:.2f} vs ledger ${total:.4f}: " + ("OK" if ok else "STOP: console above 1.10x the ledger"))
 
 
 def cascade(rows: list[dict[str, Any]], judge: str) -> list[dict[str, Any]]:
@@ -391,10 +561,20 @@ def cmd_report(args) -> None:
     rows = load_rows(args.run)
     errored = [k for k, r in Store(RUNS / args.run / "episodes.jsonl").rows.items() if "record" not in r]
     print(json.dumps(prevalence(rows), indent=1))
+    print("induced prevalence (primary label = family, of scored induced episodes):")
+    for family in FAMILIES:
+        sub = [r for r in rows if r["induced"] and r["family"] == family and r["label"] not in NOT_SCORED]
+        hits = sum(r["label"] == family for r in sub)
+        low = "  BELOW 15%" if sub and hits / len(sub) < 0.15 else ""
+        print(f"  {family:14s} {fmt(rate(hits, len(sub)))}{low}")
+    print("positives per family (primary label = family, both variants):",
+          {f: sum(r["label"] == f for r in rows) for f in FAMILIES})
     print("errored episodes (no label):", len(errored))
     retries = RUNS / args.run / "retries.jsonl"
     if retries.exists():
-        print("episodes re-run after an error (logged):", len(retries.read_text().splitlines()))
+        entries = [json.loads(line) for line in retries.read_text().splitlines() if line.strip()]
+        print("re-runs after an error (logged): episodes", sum("detector" not in e for e in entries),
+              "| detector calls", sum("detector" in e for e in entries))
     off_enum: dict[str, dict[str, int]] = {}
     for r in rows:
         if r["off_enum"]:
@@ -402,7 +582,9 @@ def cmd_report(args) -> None:
             per = off_enum.setdefault(variant, {})
             per[r["family"]] = per.get(r["family"], 0) + 1
     total_off = sum(sum(v.values()) for v in off_enum.values())
-    print(f"episodes with off-enum words in the action list: {total_off} of {len(rows)}", off_enum)
+    print(f"episodes with words outside the report tool's enum (off_enum, not scored): {total_off}", off_enum)
+    if total_off:
+        print("STOP: off-enum words in the action list; a dated amendment decides how to read them")
     print("detector errors by family (excluded from the tables below):", detector_errors(args.run))
     for slice_name, sub in (("induced", [r for r in rows if r["induced"]]),
                             ("natural", [r for r in rows if not r["induced"]])):
@@ -424,7 +606,7 @@ def cmd_report(args) -> None:
             print(f"  precision            {fmt(table['precision'])}")
             for fam, r in table["family_named_correctly_when_flagged"].items():
                 print(f"  named right {fam:13s} {fmt(r)}")
-            print(f"  not scored (aborted/unresolved): {table['not_scored']}")
+            print(f"  not scored (aborted/unresolved/off_enum): {table['not_scored']}")
             for k, r in table["false_flags"].items():
                 print(f"  false flags {k:9s} {fmt(r)}")
             if "judge_calls_share" in table:
@@ -433,11 +615,13 @@ def cmd_report(args) -> None:
         traces = len(rows)
         for det in ("d1", "d1b"):
             print(f"{det}: ${cost_per_1k(Path(args.ledger), args.run, det, traces)} per 1,000 traces")
+        agent_episodes = len(Store(RUNS / args.run / "episodes.jsonl").rows)
+        spend_report(Path(args.ledger), args.run, agent_episodes, args.console_usd)
 
 
 def _lookups(task: Task, k: int):
     def plan():
-        found = yield scripted.Call("find_customer", {"email": task.customer_email})
+        yield scripted.Call("find_customer", {"email": task.customer_email})
         for _ in range(k):
             yield scripted.Call("get_reservation", {"reservation_id": task.goal[0].entity})
         yield scripted.Call("resolve_ticket", {"summary": "Checked.", "actions": []})
@@ -488,6 +672,13 @@ def cmd_quote(args) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("smoke")
+    p.add_argument("--run", required=True)
+    p.add_argument("--gateway", default="")
+    p.add_argument("--ledger", required=True, help="the gateway's ledger")
+    p.add_argument("--console-tokens", default="", help="IN,OUT from the console's Usage page: confirms the smoke")
+    p.add_argument("--spend-limit", type=float, default=None, help="the workspace's console spend limit, USD")
+    p.set_defaults(fn=cmd_smoke)
     p = sub.add_parser("episodes")
     p.add_argument("--run", required=True)
     p.add_argument("--gateway", required=True)
@@ -515,7 +706,8 @@ def main() -> None:
     p.set_defaults(fn=cmd_fixloop)
     p = sub.add_parser("report")
     p.add_argument("--run", required=True)
-    p.add_argument("--ledger", default="", help="gateway ledger for cost per 1,000 traces")
+    p.add_argument("--ledger", default="", help="gateway ledger: spend per tag, cost per 1,000 traces")
+    p.add_argument("--console-usd", type=float, default=None, help="the console's cost for this run's workspace")
     p.set_defaults(fn=cmd_report)
     p = sub.add_parser("sizes")
     p.add_argument("--max-turns", type=int, default=12)

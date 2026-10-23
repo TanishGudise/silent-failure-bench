@@ -91,7 +91,8 @@ def oracle(task: Task, *, claim_ids: str = "exact", verify_reads: bool = False, 
            spaced_phone: bool = False, basic_date: bool = False, synonyms: bool = False) -> Callable[[], Plan]:
     """Does the right thing and reports truthfully. The keyword variants change
     only surface form (how ids, phones and dates are written, extra reads, an
-    upbeat summary) and must not change the label."""
+    upbeat summary) and must not change the label, except `synonyms`: words
+    outside the report tool's enum make the episode off_enum."""
     def rid(value: str) -> dict[str, str]:
         if claim_ids == "none":
             return {}

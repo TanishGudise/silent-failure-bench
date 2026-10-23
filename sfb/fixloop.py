@@ -165,19 +165,24 @@ class FixResult:
 SCORED = {"fixed", "unchanged", "regressed"}
 
 
+def trigger_seed(trigger: str) -> int:
+    return int(trigger.split("|", 1)[0].split(":")[1])
+
+
 def gate_table(results: list[FixResult]) -> dict[str, dict[str, int]]:
     """Per gate, over fixes with a scored outcome: PRs it would open, how many
     are bad, and good fixes kept and blocked. The null fix is counted over the
-    same eligible results (no errors, not gate-only): G1 per trigger (its own
-    null replays); G2 and G3 per family, since a family's triggers share one
-    null run on the gate seeds."""
+    same scored fixes: G1 per trigger (its own null replays); G2 and G3 once
+    per family, since a family's triggers share one null run on the gate seeds,
+    with the family's first scored trigger by seed supplying the null G1."""
     scored = [r for r in results if r.outcome in SCORED]
-    eligible = [r for r in results if not r.errors and not r.gate_only]
-    per_family = list({r.family: r for r in eligible}.values())
+    per_family: dict[str, FixResult] = {}
+    for r in sorted(scored, key=lambda r: trigger_seed(r.trigger)):
+        per_family.setdefault(r.family, r)
     table = {}
     for gate in ("G1", "G2", "G3"):
         opened = [r for r in scored if r.gate(gate)]
-        null_pool = eligible if gate == "G1" else per_family
+        null_pool = scored if gate == "G1" else list(per_family.values())
         table[gate] = {
             "scored_fixes": len(scored),
             "opened": len(opened),

@@ -19,10 +19,12 @@ class FakeUpstream:
     """mode: "ok"; "drop" (read the request, close without replying);
     "overloaded_once" (529 with no usage, then normal replies); "truncate"
     (a 200 whose body is cut off); "html200" (a 200 that isn't JSON);
-    "error500" (a 500 with no usage)."""
+    "error500" (a 500 with no usage); "limit400" (the API's 400 for a
+    workspace usage limit); "error400" (any other 400)."""
 
     def __init__(self, mode: str = "ok") -> None:
         self.mode = mode
+        self.usage_extra: dict = {}  # merged into every reply's usage
         self.requests: list[dict] = []
         self.lock = threading.Lock()
         handler = self._handler()
@@ -50,6 +52,17 @@ class FakeUpstream:
                     self.close_connection = True
                     self.connection.close()
                     return
+                if fake.mode in ("limit400", "error400"):
+                    message = {"limit400": "You have reached your specified workspace API usage limits.",
+                               "error400": "messages: bad request"}[fake.mode]
+                    data = json.dumps({"type": "error", "error": {"type": "invalid_request_error",
+                                                                  "message": message}}).encode()
+                    self.send_response(400)
+                    self.send_header("content-type", "application/json")
+                    self.send_header("content-length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if fake.mode in ("truncate", "html200", "error500"):
                     data = {"truncate": b'{"id": "msg_fake", "usage": {"inp',
                             "html200": b"<html>gateway</html>",
@@ -73,7 +86,7 @@ class FakeUpstream:
         return Handler
 
     def respond(self, body: dict) -> dict:
-        usage = {"input_tokens": len(json.dumps(body)) // 4, "output_tokens": 40}
+        usage = {"input_tokens": len(json.dumps(body)) // 4, "output_tokens": 40, **self.usage_extra}
         base = {"id": "msg_fake", "type": "message", "role": "assistant", "model": body["model"],
                 "stop_sequence": None, "usage": usage}
         fmt = (body.get("output_config") or {}).get("format")
