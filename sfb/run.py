@@ -423,8 +423,12 @@ def cmd_detect(args) -> None:
             out.add({"key": key, "episode": row["key"], "detector": name, "manifest": manifest_hash,
                      "flag": v.flag, "family": v.family, "reasons": v.reasons, "usage": usage})
 
+    rows = seed_major(episodes.rows.values())
+    if args.families:  # judge these families only, e.g. to set the order a cap cuts in
+        wanted_families = set(args.families.split(","))
+        rows = [r for r in rows if r.get("record", {}).get("family") in wanted_families]
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        list(pool.map(one, seed_major(episodes.rows.values())))
+        list(pool.map(one, rows))
     stopper.check("verdicts")
     print(f"{len(out.rows)} detector results")
 
@@ -784,6 +788,7 @@ def main() -> None:
     p.add_argument("--run", required=True)
     p.add_argument("--gateway", default="")
     p.add_argument("--detectors", default="d2,d3")
+    p.add_argument("--families", default="", help="only these families' episodes (default: all)")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--retry-errors", action="store_true", help="re-run detector calls that errored (logged)")
     p.set_defaults(fn=cmd_detect)

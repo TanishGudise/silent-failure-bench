@@ -287,6 +287,26 @@ def test_the_sonnet_judge_arm_sends_d1s_prompt_on_sonnet(gate_env, monkeypatch):
     assert {v["detector"] for v in verdicts} == {"d1", "d1s"} and all("flag" in v for v in verdicts)
 
 
+def test_detect_can_judge_one_family_at_a_time(gate_env, monkeypatch):
+    env, upstream, tmp = gate_env
+    server, url = _start(env, upstream, tmp / "spend.jsonl", 1.0)
+    monkeypatch.chdir(tmp)
+    from sfb import run as runner
+    import sys
+
+    try:
+        monkeypatch.setattr(sys, "argv", ["sfb.run", "episodes", "--run", "o", "--gateway", url, "--families",
+                                          "loop,partial", "--seeds", "0-0", "--variants", "induced"])
+        runner.main()
+        monkeypatch.setattr(sys, "argv", ["sfb.run", "detect", "--run", "o", "--gateway", url,
+                                          "--detectors", "d1s", "--families", "partial"])
+        runner.main()
+    finally:
+        server.shutdown()
+    verdicts = [json.loads(l) for l in (tmp / "runs/o/detect.jsonl").read_text().splitlines()]
+    assert [v["episode"].split(":")[0] for v in verdicts] == ["partial"]
+
+
 def test_fixloop_end_to_end_against_the_fake(gate_env, monkeypatch):
     env, upstream, tmp = gate_env
     server, url = _start(env, upstream, tmp / "spend.jsonl", 2.0)
