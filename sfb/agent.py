@@ -53,9 +53,11 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "reservation_id": {"type": "string", "description": "Required for cancel, change_date and refund"},
             "status": {"type": "string", "enum": ["done", "pending", "failed"]},
             "detail": {"type": "string"}},
-            "required": ["type", "status"]}}},
-        "required": ["summary", "actions"]},
+            "required": ["type", "status"], "additionalProperties": False}}},
+        "required": ["summary", "actions"], "additionalProperties": False},
 }
+# resolve_ticket is the report of record, so its enum is enforced by the API.
+STRICT_TOOLS = {"resolve_ticket"}
 
 # Stop reasons that end an episode as aborted rather than as agent behavior.
 ABORT_STOPS = {"max_tokens", "refusal", "model_context_window_exceeded", "pause_turn"}
@@ -86,7 +88,8 @@ class AgentConfig:
 
     def tools(self) -> list[dict[str, Any]]:
         descriptions = dict(self.tool_descriptions)
-        return [{"name": name, "description": descriptions[name], "input_schema": schema}
+        return [{"name": name, "description": descriptions[name], "input_schema": schema,
+                 **({"strict": True} if name in STRICT_TOOLS else {})}
                 for name, schema in TOOL_SCHEMAS.items()]
 
     def with_edits(self, system_prompt: str | None = None,
@@ -137,6 +140,7 @@ class Episode:
             "task": self.task_key, "family": self.family, "seed": self.seed,
             "induced": self.induced, "config": self.config,
             "label": self.labels.primary, "labels": sorted(self.labels.all),
+            "off_enum": self.labels.details.get("off_enum", []),
             "model_calls": self.model_calls, "usage": self.usage, "stop_reasons": self.stop_reasons,
             "claim": self.env.claim, "calls": [c.__dict__ for c in self.env.calls],
             "final_world": self.env.world.snapshot(),

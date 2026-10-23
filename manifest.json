@@ -1,26 +1,26 @@
 {
  "files": {
-  "preregistration.md": "13084c0e047151dedc2caa405fad2b407801340c62b5474d73570eee0fce80b2",
+  "preregistration.md": "c02d440b0b9946451086cdbd38d062ff2f5d2b00ff68cb771ab0d7abd95bc9a7",
   "pyproject.toml": "d0ee5858bd9bfcabe39da3a2ac2fa170aacff06703a18a18d75df7d5c0f1196c",
   "scripts/gateway.sh": "fef2a9921af57143e0e9af0fbabb84858d6c2a3dbb406397eeb460bca48527b0",
   "scripts/harness.sh": "36be4516825092cd5de5acfde21c4f55a6d69a7709aa6a8bf6048dc38eab9a45",
   "tools/netguard/sitecustomize.py": "b2459ecb094bd4b73fed88f2326cad72b9da0f96f92da3b2367e77387c4be92e",
   "tools/netguard/loopback.sb": "50b19464849937a4516999002c8f36eb66da02bb3a3296068f6bc2dfc9fad315",
   "sfb/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  "sfb/agent.py": "9f0687a67eab801790e7a22cd245cbc2e2deeb89dc5f632c7fe93077f8c6981b",
+  "sfb/agent.py": "8317a978ca206f71562e29f1bb19f2401500c6c7e1a61e023bffed9e10c03890",
   "sfb/analysis.py": "fbd6041144d67791d62ff92abef13769cb9bdded9105d8df33e469b5933eea8f",
-  "sfb/detectors.py": "47a67c4bd758bb88e4d2dd3ad2df640a08c4b75834172d0396123c5f288dd5b6",
+  "sfb/detectors.py": "db1941f93b7537abb0e40b25592f173bc9e028f46f351629151aef5478335956",
   "sfb/env.py": "b0d155efdb8e0ad57101c16797c30e2f9da3b3b30db79ec2a57231c63799f351",
-  "sfb/fixloop.py": "06412cbefaf7f96cd1c0610c6c7b9e297d194a67a6d5f1b7e17f210a337b7826",
+  "sfb/fixloop.py": "369dfdd2641c135c871cfc3b9b74ce7fb577b5458d053e0583ff5c1da2594865",
   "sfb/gate.py": "16bc6b875cb76a683770aead75fa7487844b7eab0b6b7a7dfa734a3c849d80a5",
-  "sfb/gateway.py": "69ad2074b322da18e292456b6b6194d25d1e5335c2942b60708e3855d0636623",
-  "sfb/labels.py": "3d97c2768917c8d820cd9f27095b7adca33ad9b0a630bcd9b1fa54859b1f7b6a",
-  "sfb/llm.py": "4bfa931787e528aa7d290a70db7420903897547ff68cad9f58b0a2f3f9319bba",
+  "sfb/gateway.py": "69f4fd175bc58669f8013cf7bb19ecabc270bc72664283fe1f452efda9f36922",
+  "sfb/labels.py": "c89dd08c6403a1f360c3093f3f63f1d343c257cbe10bccbea0554df3863e243f",
+  "sfb/llm.py": "7776e33d2d8893b2a5b5be91085228191cd5fc26087c9a4060e7cc492afbea7f",
   "sfb/manifest.py": "2371e49fdfb63fcea683bb36a5dd2acb2c7ef7dcbc4f1a3aa22ba0c7bff0a93d",
-  "sfb/run.py": "9a513e14aa14771da450c9bd3dff9873f69a3b46fa14fdd48a9397f1c3d020ce",
+  "sfb/run.py": "e24e7bf46dd434c88a5e21c64b3ba0780f8ebc18fc1c76a0136801b2900eea6d",
   "sfb/scripted.py": "792af7a12aa92d0b0479388a7bd1145bac193cbfdb999d44b1edc872976c5ec3",
   "sfb/tasks.py": "3ae70144af33eae87bed7ccb1e09b6ede268827160c9a471edff2be957eca922",
   "sfb/world.py": "0be7cf260e466cb9da5131f70c694009067bed61af1a3995ea618d36ecd19f27"
  },
- "manifest_hash": "efad76ad4f88049abf3cbe44d0b512e43d26103e074148b3d5ae49e9585ba026"
+ "manifest_hash": "554b51b34deb6aa4d1c56ea461512d489d9aaf2849a3d0641f6760604fe235ce"
 }

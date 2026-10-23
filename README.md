@@ -11,7 +11,7 @@ The failures counted here: the agent changed the wrong record, acted on an instr
 - **Natural slice.** The same tasks and seeds are also run without the condition, and reported separately.
 - **Traces.** Episodes are traced with a vendor tracing SDK (MIT, pinned in `pyproject.toml`) and captured locally through its transport hook, so detectors see production-format traces. Nothing is sent anywhere.
 - **Detectors.** An LLM judge, a set of LLM behavior checks, deterministic trace rules, and a probe that re-reads the records the agent claims to have changed.
-- **Fix loop.** A fixer proposes a prompt or tool-description change from one triggering trace. The triggering task is re-run with the fix, then the fix is checked on held-out seeds of the same failure and on other tasks, paired against the unchanged agent. A null arm re-runs the triggering task with no change, to show how often an empty fix would pass the same gates.
+- **Fix loop.** A fixer proposes a prompt or tool-description change from one triggering trace. The triggering task is re-run with the fix, then the fix is checked on held-out seeds of the same failure and on other tasks, paired against the unchanged agent. A null arm re-runs the triggering task, and the gate seeds, with no change, to show how often an empty fix would pass the same gates.
 
 The design, metrics, hypotheses, budget and stop rules are in [preregistration.md](preregistration.md), frozen before any paid run. `manifest.json` hashes it together with the code that defines the measurement.
 
@@ -30,7 +30,7 @@ Paid runs go through a local gateway that holds the API key (from a gitignored `
 scripts/gateway.sh 1.00 runs/pilot/spend.jsonl &
 scripts/harness.sh episodes --run pilot --gateway http://127.0.0.1:8765 --seeds 0-4
 scripts/harness.sh detect --run pilot --gateway http://127.0.0.1:8765 --detectors d1,d1b,d2,d3
-scripts/harness.sh report --run pilot
+scripts/harness.sh report --run pilot --ledger runs/pilot/spend.jsonl   # --ledger adds cost per 1,000 traces
 ```
 
 The harness can reach only loopback. The gateway can reach only the API host.

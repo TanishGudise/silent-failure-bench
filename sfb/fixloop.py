@@ -167,19 +167,25 @@ SCORED = {"fixed", "unchanged", "regressed"}
 
 def gate_table(results: list[FixResult]) -> dict[str, dict[str, int]]:
     """Per gate, over fixes with a scored outcome: PRs it would open, how many
-    are bad, good fixes kept and blocked, and how often the null fix passes."""
+    are bad, and good fixes kept and blocked. The null fix is counted over the
+    same eligible results (no errors, not gate-only): G1 per trigger (its own
+    null replays); G2 and G3 per family, since a family's triggers share one
+    null run on the gate seeds."""
     scored = [r for r in results if r.outcome in SCORED]
+    eligible = [r for r in results if not r.errors and not r.gate_only]
+    per_family = list({r.family: r for r in eligible}.values())
     table = {}
     for gate in ("G1", "G2", "G3"):
         opened = [r for r in scored if r.gate(gate)]
+        null_pool = eligible if gate == "G1" else per_family
         table[gate] = {
             "scored_fixes": len(scored),
             "opened": len(opened),
             "bad_opened": sum(r.outcome != "fixed" for r in opened),
             "good_kept": sum(r.outcome == "fixed" for r in opened),
             "good_blocked": sum(r.outcome == "fixed" and not r.gate(gate) for r in scored),
-            "null_fix_passes": sum(r.gate(gate, null=True) for r in results),
-            "null_fix_tried": len(results),
+            "null_fix_passes": sum(r.gate(gate, null=True) for r in null_pool),
+            "null_fix_tried": len(null_pool),
         }
     return table
 

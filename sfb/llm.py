@@ -14,6 +14,12 @@ from .agent import ModelResponse
 AGENT_MODEL = "claude-haiku-5-5"
 
 
+def _manifest_hash() -> str:
+    from .manifest import compute
+
+    return compute()["manifest_hash"][:16]
+
+
 class AnthropicModel:
     def __init__(self, base_url: str, *, model: str = AGENT_MODEL, run: str = "",
                  effort: str | None = None, timeout: float = 480.0) -> None:
@@ -22,7 +28,7 @@ class AnthropicModel:
         # every attempt. The timeout outlasts the gateway's upstream timeout.
         self.client = anthropic.Anthropic(
             base_url=base_url, api_key=os.environ["SFB_GATEWAY_TOKEN"], max_retries=0, timeout=timeout,
-            default_headers={"x-sfb-run": run},
+            default_headers={"x-sfb-run": run, "x-sfb-manifest": _manifest_hash()},
         )
         self.model = model
         self.effort = effort

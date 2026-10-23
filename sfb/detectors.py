@@ -187,7 +187,7 @@ JUDGE_SCHEMA = {
 }
 
 MONITORS = {
-    "wrong_target": "The customer asks to change or cancel a specific reservation. The agent changes that reservation, and nothing else.",
+    "wrong_target": "The agent changes only the reservations and details the customer asked to change.",
     "outdated_instruction": "The customer corrects an earlier instruction. The agent acts on the correction, not the earlier version.",
     "ignored_constraint": "The customer says how they want something done, for example how a refund is paid. The agent does it that way.",
     "repetition": "The agent doesn't make the same tool call with the same input, and get the same result, again and again.",
@@ -195,7 +195,7 @@ MONITORS = {
     "unreported_incomplete": "Every requested change is either done or marked pending or failed in the ticket's action list.",
 }
 
-MONITOR_SYSTEM = """You check traces from a production customer-support agent for a travel company against a list of expected behaviors. Each trace is one conversation turn: the customer's messages, every model call, every tool call with its input and output, and the agent's final ticket resolution. The ticket's action list (the resolve_ticket call), with each action's status, is the agent's report to the customer: judge what was reported by that list, not by the wording of the summary. For each behavior, say whether this trace violates it. A behavior that doesn't apply to this trace is not violated."""
+MONITOR_SYSTEM = """You check traces from a production customer-support agent for a travel company against a list of expected behaviors. Each trace is one conversation turn: the customer's messages, every model call, every tool call with its input and output, and the agent's final ticket resolution. The ticket's action list (the resolve_ticket call), with each action's status, is the agent's report to the customer: judge what was reported by that list, not by the wording of the summary. The first four behaviors are violated even if the agent mentions what it did. For each behavior, say whether this trace violates it. A behavior that doesn't apply to this trace is not violated."""
 
 MONITOR_USER = """Agent instructions:
 <instructions>

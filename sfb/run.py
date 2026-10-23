@@ -105,11 +105,18 @@ def run_episodes(store: Store, jobs: Iterable[tuple[Task, AgentConfig, int]], ga
     model = model_for(gateway, run)
     stop = threading.Event()
     todo = []
+    retried = []
     for task, config, rep in jobs:
         key = f"{task.key}|{config.fingerprint}|{rep}"
         row = store.rows.get(key)
         if row is None or (retry_errors and "error" in row):
             todo.append((key, task, config))
+            if row is not None:
+                retried.append({"key": key, "previous_error": row["error"]})
+    if retried:  # every re-run of an errored episode is logged
+        with open(store.path.parent / "retries.jsonl", "a") as handle:
+            for entry in retried:
+                handle.write(json.dumps(entry) + "\n")
 
     def one(item):
         if stop.is_set():
@@ -306,6 +313,7 @@ def cmd_fixloop(args) -> None:
     bad, passing = fixloop.replay_false_pass(final)
     lo, hi = wilson(bad, passing)
     summary_path.write_text(json.dumps({
+        "manifest_hash": manifest_hash,
         "fixes": [r.record() for r in final],
         "replay_false_pass": {"bad": bad, "replay_passing_scored": passing, "wilson95": [lo, hi]},
         "gates": fixloop.gate_table(final),
@@ -327,7 +335,8 @@ def load_rows(run: str) -> list[dict[str, Any]]:
             continue
         rec = row["record"]
         rows.append({"key": key, "family": rec["family"], "induced": rec["induced"],
-                     "label": rec["label"], "verdicts": verdicts.get(key, {})})
+                     "label": rec["label"], "off_enum": rec.get("off_enum", []),
+                     "verdicts": verdicts.get(key, {})})
     return rows
 
 
@@ -383,6 +392,17 @@ def cmd_report(args) -> None:
     errored = [k for k, r in Store(RUNS / args.run / "episodes.jsonl").rows.items() if "record" not in r]
     print(json.dumps(prevalence(rows), indent=1))
     print("errored episodes (no label):", len(errored))
+    retries = RUNS / args.run / "retries.jsonl"
+    if retries.exists():
+        print("episodes re-run after an error (logged):", len(retries.read_text().splitlines()))
+    off_enum: dict[str, dict[str, int]] = {}
+    for r in rows:
+        if r["off_enum"]:
+            variant = "induced" if r["induced"] else "natural"
+            per = off_enum.setdefault(variant, {})
+            per[r["family"]] = per.get(r["family"], 0) + 1
+    total_off = sum(sum(v.values()) for v in off_enum.values())
+    print(f"episodes with off-enum words in the action list: {total_off} of {len(rows)}", off_enum)
     print("detector errors by family (excluded from the tables below):", detector_errors(args.run))
     for slice_name, sub in (("induced", [r for r in rows if r["induced"]]),
                             ("natural", [r for r in rows if not r["induced"]])):

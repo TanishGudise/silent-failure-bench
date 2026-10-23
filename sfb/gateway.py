@@ -29,10 +29,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 # USD per million tokens: (input, output, input above the long-prompt threshold, output above it).
-# Source: Anthropic model pricing as listed in the claude-api skill's model table
-# (cached 2026-10-06): Haiku 5.5 $0.10/$0.50 for prompts up to 100K tokens,
-# $0.50/$2.50 beyond; Sonnet 5.5 $2/$10. Re-check before each paid checkpoint,
-# and keep a spend limit on the API key in the console as a backstop.
+# Source: https://claude.com/pricing, read 2026-10-22: Haiku 5.5 $0.10/$0.50 for
+# prompts up to 100K tokens, $0.50/$2.50 beyond, cache reads 0.1x and 5-minute
+# cache writes 1.25x of input; Sonnet 5.5 $2/$10 (cache reads $0.10, booked here
+# at the higher 0.1x). Re-check before each paid checkpoint. The key lives in a
+# workspace whose console spend limit is the backstop.
 PRICES = {
     "claude-haiku-5-5": (0.10, 0.50, 0.50, 2.50),
     "claude-sonnet-5-5": (2.00, 10.00, 2.00, 10.00),
@@ -162,6 +163,7 @@ def make_handler(meter: Meter, key: str, upstream: str, token: str):
             headers = {"content-type": "application/json", "x-api-key": key,
                        "anthropic-version": self.headers.get("anthropic-version", "2023-06-01")}
             run = self.headers.get("x-sfb-run", "")
+            manifest = self.headers.get("x-sfb-manifest", "")
             for attempt in range(len(RETRY_DELAYS) + 1):
                 started = time.time()
                 try:
@@ -174,22 +176,28 @@ def make_handler(meter: Meter, key: str, upstream: str, token: str):
                     parsed = json.loads(payload)
                     usage = (parsed.get("usage") or {}) if isinstance(parsed, dict) else {}
                 except Exception as exc:  # dropped, cut off, unreadable: may have been billed
-                    meter.settle(bound, {"ts": round(started, 3), "run": run, "model": model, "status": 0,
+                    meter.settle(bound, {"ts": round(started, 3), "run": run, "manifest": manifest, "model": model, "status": 0,
                                          "usage": {}, "usd": bound, "note": f"upstream failed: {type(exc).__name__}"})
                     return self._error(502, "api_error", f"upstream failed: {type(exc).__name__}")
                 last = attempt == len(RETRY_DELAYS)
                 if status in RETRY_STATUSES and not usage and not last:
-                    meter.book({"ts": round(started, 3), "run": run, "model": model, "status": status,
+                    meter.book({"ts": round(started, 3), "run": run, "manifest": manifest, "model": model, "status": status,
                                 "usage": {}, "usd": 0.0, "note": "unbilled error reply; retrying"})
                     time.sleep(RETRY_DELAYS[attempt])
                     continue
-                if usage:
-                    usd, note = actual_usd(model, usage), ""
-                elif status < 300 or (status >= 500 and status not in RETRY_STATUSES):
-                    usd, note = bound, "no usage on a reply that may have been billed"
-                else:
-                    usd, note = 0.0, "unbilled error reply"
-                meter.settle(bound, {"ts": round(started, 3), "run": run, "model": model, "status": status,
+                try:
+                    tier = usage.get("service_tier") if usage else None
+                    usd, note = (actual_usd(model, usage), "") if usage else (None, "")
+                    if tier not in (None, "standard"):
+                        usd, note = bound, f"unexpected service tier {tier}"
+                except (TypeError, ValueError, AttributeError):
+                    usd, note = bound, "unreadable usage"
+                if usd is None:
+                    if status < 300 or (status >= 500 and status not in RETRY_STATUSES):
+                        usd, note = bound, "no usage on a reply that may have been billed"
+                    else:
+                        usd, note = 0.0, "unbilled error reply"
+                meter.settle(bound, {"ts": round(started, 3), "run": run, "manifest": manifest, "model": model, "status": status,
                                      "usage": usage, "usd": usd, **({"note": note} if note else {})})
                 return self._reply(status, payload)
 
