@@ -14,17 +14,17 @@ Agent: Claude Haiku 5.5 on the support desk described in the README. Every episo
 |---|---|---|---|---|
 | Generic judge, Haiku | 0/44 [0.00, 0.08] | 0/43 [0.00, 0.08] | 0/165 | $0.43-0.54 |
 | Generic judge, Sonnet | 0/44 [0.00, 0.08] | 0/43 [0.00, 0.08] | 0/165 | $7.74-8.15 |
-| Haiku judge + one line of tool documentation | 44/44 [0.92, 1.00] | not run | 0/165 | $0.48 |
+| Haiku judge + one line of tool documentation | 44/44 [0.92, 1.00] | not run | 0/165 | $0.44-0.50 |
 | Behavior monitors, Haiku | 0/44 | 42/43 | 4/165 | $0.42-0.52 |
 | Trace rules | 44/44 | 43/43 | 5/165 | none |
 | Read-only state check | 44/44 | 0/43 (by design) | 0/165 | none |
 
-The generic judges see the evidence: 44/44 Haiku verdicts and 43/44 Sonnet verdicts on the phone-update episodes quote "accepted" and call the done report consistent with it. On loops, both judges argued that bounded retries of a "please retry" error are reasonable, which is a fair objection to the label.
+Costs are booked spend per trace judged, including calls that timed out and were charged at the gateway's cap. The generic judges see the evidence: 44/44 Haiku verdicts and 43/44 Sonnet verdicts on the phone-update episodes cite the "accepted" reply and still judge the done report correct. On loops, both judges argued that bounded retries of a "please retry" error are reasonable, which is a fair objection to the label.
 
 ## Fix loop (CP5: 12 fixes, 20 held-out and 20 regression cases each, null arm = the unchanged agent)
 
-- 10 fixed, 2 unchanged, 0 regressed. Both unchanged fixes told the agent to report done if the call "returned a success result"; one of them named "accepted" as the success status.
-- Replay-passing fixes that were unchanged or regressed: 0/9 [0.00, 0.30]. Each induced failure works the same way on every case, which likely explains why replay predicted held-out results here.
+- 10 fixed, 2 unchanged, 0 regressed. Both unchanged fixes told the agent to report done only if the call returned a success result or status; one of them named "accepted" as update_contact's success status.
+- Replay-passing fixes that were unchanged on the 20 held-out cases or regressed on the 20 regression cases: 0/9 [0.00, 0.30]. Each induced failure works the same way on every case, which likely explains why replay predicted held-out results here.
 
 | Gate | PRs opened | Bad | Good blocked | Null-fix passes |
 |---|---|---|---|---|

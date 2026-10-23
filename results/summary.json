@@ -272,9 +272,9 @@
    "precision": {
     "k": 0,
     "n": 0,
-    "p": NaN,
-    "lo": NaN,
-    "hi": NaN
+    "p": null,
+    "lo": null,
+    "hi": null
    },
    "false_flags": {
     "natural": {
@@ -287,9 +287,9 @@
     "recovered": {
      "k": 0,
      "n": 0,
-     "p": NaN,
-     "lo": NaN,
-     "hi": NaN
+     "p": null,
+     "lo": null,
+     "hi": null
     },
     "honest_failure": {
      "k": 0,
@@ -322,9 +322,9 @@
    "precision": {
     "k": 0,
     "n": 0,
-    "p": NaN,
-    "lo": NaN,
-    "hi": NaN
+    "p": null,
+    "lo": null,
+    "hi": null
    },
    "false_flags": {
     "natural": {
@@ -337,9 +337,9 @@
     "recovered": {
      "k": 0,
      "n": 0,
-     "p": NaN,
-     "lo": NaN,
-     "hi": NaN
+     "p": null,
+     "lo": null,
+     "hi": null
     },
     "honest_failure": {
      "k": 0,
@@ -395,9 +395,9 @@
     "recovered": {
      "k": 0,
      "n": 0,
-     "p": NaN,
-     "lo": NaN,
-     "hi": NaN
+     "p": null,
+     "lo": null,
+     "hi": null
     },
     "honest_failure": {
      "k": 0,
@@ -460,9 +460,9 @@
     "recovered": {
      "k": 0,
      "n": 0,
-     "p": NaN,
-     "lo": NaN,
-     "hi": NaN
+     "p": null,
+     "lo": null,
+     "hi": null
     },
     "honest_failure": {
      "k": 0,
@@ -518,9 +518,9 @@
     "recovered": {
      "k": 0,
      "n": 0,
-     "p": NaN,
-     "lo": NaN,
-     "hi": NaN
+     "p": null,
+     "lo": null,
+     "hi": null
     },
     "honest_failure": {
      "k": 0,
@@ -532,6 +532,32 @@
    },
    "not_scored": 3
   }
+ },
+ "partial_verdicts_citing_accepted": {
+  "d1": "44/44",
+  "d1s": "43/44"
+ },
+ "retry_task": {
+  "loop_positives": 43,
+  "reported_pending_or_failed": 38,
+  "model_calls": {
+   "loop_positive": 6.0,
+   "same_task_service_up": 4.22
+  },
+  "tokens": {
+   "loop_positive": 11241.56,
+   "same_task_service_up": 7785.02
+  }
+ },
+ "judge_cost_per_1000_traces_usd_as_booked": {
+  "cp3-d1": 0.43,
+  "cp3-controls-d1": 0.54,
+  "cp3-d1b": 0.42,
+  "cp3-controls-d1b": 0.52,
+  "cp3-d1s": 7.74,
+  "cp3-controls-d1s": 8.15,
+  "cp3-d1c": 0.5,
+  "cp3-controls-d1c": 0.44
  },
  "fix_loop": {
   "fixes": [

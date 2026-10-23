@@ -323,7 +323,8 @@ def test_d1c_is_d1_plus_the_tool_note_on_selected_episodes(gate_env, monkeypatch
         selected = sum(not e["induced"] and e["label"] == label for e in episodes)
         before = len(upstream.requests)
         monkeypatch.setattr(sys, "argv", ["sfb.run", "detect", "--run", "c", "--gateway", url, "--detectors",
-                                          "d1,d1c", "--variants", "natural", "--labels", label])
+                                          "d1,d1c", "--variants", "natural", "--labels", label,
+                                          "--workers", "1"])  # one episode at a time: d1 then d1c
         runner.main()
     finally:
         server.shutdown()
