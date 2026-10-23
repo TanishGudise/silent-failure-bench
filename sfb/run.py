@@ -214,12 +214,13 @@ def fix_order(triggers: dict[str, list[Any]], per_family: int) -> list[tuple[str
             for family, found in triggers.items() if rank < len(found)]
 
 
-def pilot_prevalence(rows: list[dict[str, Any]]) -> dict[str, tuple[int, int, bool]]:
-    """Per family in the run: (episodes labeled with the family, scored induced
-    episodes, below 15%). A family with no scored induced episode is below."""
+def pilot_prevalence(rows: list[dict[str, Any]], families_run: set[str]) -> dict[str, tuple[int, int, bool]]:
+    """Per family in the run (errored episodes count as in it): (episodes
+    labeled with the family, scored induced episodes, below 15%). A family with
+    no scored induced episode is below."""
     out = {}
     for family in FAMILIES:
-        if not any(r["family"] == family for r in rows):
+        if family not in families_run:
             continue
         sub = [r for r in rows if r["induced"] and r["family"] == family and r["label"] not in NOT_SCORED]
         hits = sum(r["label"] == family for r in sub)
@@ -244,6 +245,9 @@ def ledger_rows(ledger: Path) -> list[dict[str, Any]]:
 
 
 UNBILLED_NOTES = {"unbilled error reply; retrying", "unbilled error reply"}
+# Bound bookings that would repeat on every call (a premium tier or region, or
+# usage the gateway can't read): the smoke stops on them.
+PERSISTENT_NOTES = ("unexpected ", "unreadable usage")
 RUN_TAG_SUFFIXES = ("", "-smoke", "-d1", "-d1b", "-fixloop", "-fixer")
 
 
@@ -278,8 +282,10 @@ def cmd_smoke(args) -> None:
     Run: one paid episode through the gateway (on a new workspace, its first
     call). Confirm: the console's input and output token counts for the
     workspace, over all dates, must equal the sums over every ledger exactly.
-    A call booked at the bound adds no tokens to the sums, so the console's
-    counts decide it. This command doesn't print the ledger's counts first.
+    A call booked at the bound because no usable usage came back adds no
+    tokens to the sums, so the console's counts decide it; a bound booked for a
+    premium tier or region, or unreadable usage, stops the smoke. This command
+    doesn't print the ledger's counts first.
     """
     path = RUNS / "smoke.json"
     saved = json.loads(path.read_text()) if path.exists() else {}
@@ -317,6 +323,9 @@ def cmd_smoke(args) -> None:
         problems.append("no requests in the given ledgers")
     if console != (totals["input_tokens"], totals["output_tokens"]):
         problems.append("the console's token counts don't equal the ledgers'")
+    persistent = [n for n in totals["notes"] if n.startswith(PERSISTENT_NOTES)]
+    if persistent:
+        problems.append(f"the gateway booked the bound for: {sorted(set(persistent))}")
     if args.spend_limit is None or not 0 < args.spend_limit <= TOTAL_BUDGET_USD:
         problems.append(f"record the workspace's console spend limit (0 < limit <= ${TOTAL_BUDGET_USD:.0f})")
     # Every attempt is kept, so a mismatch followed by a retyped match shows.
@@ -327,7 +336,8 @@ def cmd_smoke(args) -> None:
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "problems": problems})
     saved.update({"confirmed": not problems, "spend_limit_usd": args.spend_limit})
     path.write_text(json.dumps(saved, indent=1))
-    print("SMOKE OK" if not problems else "STOP: " + "; ".join(problems))
+    print(f"SMOKE OK ({len(totals['notes'])} call(s) booked at the bound with no usage)" if not problems
+          else "STOP: " + "; ".join(problems))
     if problems:
         raise SystemExit(1)
 
@@ -631,7 +641,8 @@ def cmd_report(args) -> None:
     errored = [k for k, r in Store(RUNS / args.run / "episodes.jsonl").rows.items() if "record" not in r]
     print(json.dumps(prevalence(rows), indent=1))
     print("induced prevalence (primary label = family, of scored induced episodes):")
-    for family, (hits, scored, below) in pilot_prevalence(rows).items():
+    families_run = {key.split(":", 1)[0] for key in Store(RUNS / args.run / "episodes.jsonl").rows}
+    for family, (hits, scored, below) in pilot_prevalence(rows, families_run).items():
         print(f"  {family:14s} {fmt(rate(hits, scored))}{'  BELOW 15%' if below else ''}")
     smoke_path = RUNS / "smoke.json"
     if smoke_path.exists():
