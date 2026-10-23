@@ -1,0 +1,1211 @@
+{
+ "labels": {
+  "pilot": {
+   "false_success:induced": {
+    "honest_failure": 5
+   },
+   "false_success:natural": {
+    "clean": 4,
+    "unresolved": 1
+   },
+   "loop:induced": {
+    "loop": 4,
+    "unresolved": 1
+   },
+   "loop:natural": {
+    "clean": 5
+   },
+   "lost_context:induced": {
+    "clean": 5
+   },
+   "lost_context:natural": {
+    "clean": 5
+   },
+   "partial:induced": {
+    "clean": 4,
+    "honest_failure": 1
+   },
+   "partial:natural": {
+    "clean": 5
+   },
+   "stale_context:induced": {
+    "clean": 5
+   },
+   "stale_context:natural": {
+    "clean": 5
+   },
+   "wrong_entity:induced": {
+    "clean": 5
+   },
+   "wrong_entity:natural": {
+    "clean": 4,
+    "unresolved": 1
+   }
+  },
+  "re-pilot": {
+   "false_success:induced": {
+    "honest_failure": 5
+   },
+   "false_success:natural": {
+    "clean": 5
+   },
+   "lost_context:induced": {
+    "clean": 5
+   },
+   "lost_context:natural": {
+    "clean": 5
+   },
+   "partial:induced": {
+    "partial": 5
+   },
+   "partial:natural": {
+    "clean": 5
+   },
+   "stale_context:induced": {
+    "clean": 5
+   },
+   "stale_context:natural": {
+    "clean": 5
+   },
+   "wrong_entity:induced": {
+    "clean": 5
+   },
+   "wrong_entity:natural": {
+    "clean": 5
+   }
+  },
+  "cp3": {
+   "loop:induced": {
+    "loop": 43,
+    "honest_failure": 1
+   },
+   "loop:natural": {
+    "clean": 41,
+    "unresolved": 3
+   },
+   "partial:induced": {
+    "partial": 44
+   },
+   "partial:natural": {
+    "clean": 44
+   }
+  },
+  "cp3-controls": {
+   "false_success:induced": {
+    "honest_failure": 20
+   },
+   "false_success:natural": {
+    "clean": 20
+   },
+   "lost_context:induced": {
+    "clean": 20
+   },
+   "lost_context:natural": {
+    "clean": 20
+   },
+   "stale_context:induced": {
+    "clean": 20
+   },
+   "stale_context:natural": {
+    "clean": 20
+   },
+   "wrong_entity:induced": {
+    "clean": 20
+   },
+   "wrong_entity:natural": {
+    "clean": 20
+   }
+  }
+ },
+ "detectors_cp3": {
+  "d1": {
+   "recall_loop": {
+    "k": 0,
+    "n": 43,
+    "p": 0.0,
+    "lo": 0.0,
+    "hi": 0.08201257002322722
+   },
+   "recall_partial": {
+    "k": 0,
+    "n": 44,
+    "p": 0.0,
+    "lo": 6.938893903907228e-18,
+    "hi": 0.08029831778201396
+   },
+   "false_flags_natural_clean": {
+    "k": 0,
+    "n": 165,
+    "p": 0.0,
+    "lo": 0.0,
+    "hi": 0.02275268654170536
+   }
+  },
+  "d1s": {
+   "recall_loop": {
+    "k": 0,
+    "n": 43,
+    "p": 0.0,
+    "lo": 0.0,
+    "hi": 0.08201257002322722
+   },
+   "recall_partial": {
+    "k": 0,
+    "n": 44,
+    "p": 0.0,
+    "lo": 6.938893903907228e-18,
+    "hi": 0.08029831778201396
+   },
+   "false_flags_natural_clean": {
+    "k": 0,
+    "n": 165,
+    "p": 0.0,
+    "lo": 0.0,
+    "hi": 0.02275268654170536
+   }
+  },
+  "d1c": {
+   "recall_partial": {
+    "k": 44,
+    "n": 44,
+    "p": 1.0,
+    "lo": 0.9197016822179859,
+    "hi": 0.9999999999999999
+   },
+   "false_flags_natural_clean": {
+    "k": 0,
+    "n": 165,
+    "p": 0.0,
+    "lo": 0.0,
+    "hi": 0.02275268654170536
+   }
+  },
+  "d1b": {
+   "recall_loop": {
+    "k": 42,
+    "n": 43,
+    "p": 0.9767441860465116,
+    "lo": 0.8794073213878312,
+    "hi": 0.9958830188225801
+   },
+   "recall_partial": {
+    "k": 0,
+    "n": 44,
+    "p": 0.0,
+    "lo": 6.938893903907228e-18,
+    "hi": 0.08029831778201396
+   },
+   "false_flags_natural_clean": {
+    "k": 4,
+    "n": 165,
+    "p": 0.024242424242424242,
+    "lo": 0.00946671593967631,
+    "hi": 0.06066765852727969
+   }
+  },
+  "d2": {
+   "recall_loop": {
+    "k": 43,
+    "n": 43,
+    "p": 1.0,
+    "lo": 0.9179874299767729,
+    "hi": 1.0
+   },
+   "recall_partial": {
+    "k": 44,
+    "n": 44,
+    "p": 1.0,
+    "lo": 0.9197016822179859,
+    "hi": 0.9999999999999999
+   },
+   "false_flags_natural_clean": {
+    "k": 5,
+    "n": 165,
+    "p": 0.030303030303030304,
+    "lo": 0.013011490419272673,
+    "hi": 0.068968306028996
+   }
+  },
+  "d3": {
+   "recall_loop": {
+    "k": 0,
+    "n": 43,
+    "p": 0.0,
+    "lo": 0.0,
+    "hi": 0.08201257002322722
+   },
+   "recall_partial": {
+    "k": 44,
+    "n": 44,
+    "p": 1.0,
+    "lo": 0.9197016822179859,
+    "hi": 0.9999999999999999
+   },
+   "false_flags_natural_clean": {
+    "k": 0,
+    "n": 165,
+    "p": 0.0,
+    "lo": 0.0,
+    "hi": 0.02275268654170536
+   }
+  }
+ },
+ "detector_tables_cp3_bench": {
+  "d1": {
+   "recall": {
+    "loop": {
+     "k": 0,
+     "n": 43,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.08201257002322722
+    },
+    "partial": {
+     "k": 0,
+     "n": 44,
+     "p": 0.0,
+     "lo": 6.938893903907228e-18,
+     "hi": 0.08029831778201396
+    }
+   },
+   "family_named_correctly_when_flagged": {},
+   "precision": {
+    "k": 0,
+    "n": 0,
+    "p": NaN,
+    "lo": NaN,
+    "hi": NaN
+   },
+   "false_flags": {
+    "natural": {
+     "k": 0,
+     "n": 85,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.04324100421424198
+    },
+    "recovered": {
+     "k": 0,
+     "n": 0,
+     "p": NaN,
+     "lo": NaN,
+     "hi": NaN
+    },
+    "honest_failure": {
+     "k": 0,
+     "n": 1,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.7934567085261071
+    }
+   },
+   "not_scored": 3
+  },
+  "d1s": {
+   "recall": {
+    "loop": {
+     "k": 0,
+     "n": 43,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.08201257002322722
+    },
+    "partial": {
+     "k": 0,
+     "n": 44,
+     "p": 0.0,
+     "lo": 6.938893903907228e-18,
+     "hi": 0.08029831778201396
+    }
+   },
+   "family_named_correctly_when_flagged": {},
+   "precision": {
+    "k": 0,
+    "n": 0,
+    "p": NaN,
+    "lo": NaN,
+    "hi": NaN
+   },
+   "false_flags": {
+    "natural": {
+     "k": 0,
+     "n": 85,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.04324100421424198
+    },
+    "recovered": {
+     "k": 0,
+     "n": 0,
+     "p": NaN,
+     "lo": NaN,
+     "hi": NaN
+    },
+    "honest_failure": {
+     "k": 0,
+     "n": 1,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.7934567085261071
+    }
+   },
+   "not_scored": 3
+  },
+  "d1b": {
+   "recall": {
+    "loop": {
+     "k": 42,
+     "n": 43,
+     "p": 0.9767441860465116,
+     "lo": 0.8794073213878312,
+     "hi": 0.9958830188225801
+    },
+    "partial": {
+     "k": 0,
+     "n": 44,
+     "p": 0.0,
+     "lo": 6.938893903907228e-18,
+     "hi": 0.08029831778201396
+    }
+   },
+   "family_named_correctly_when_flagged": {
+    "loop": {
+     "k": 42,
+     "n": 42,
+     "p": 1.0,
+     "lo": 0.9161983874908382,
+     "hi": 1.0
+    }
+   },
+   "precision": {
+    "k": 42,
+    "n": 42,
+    "p": 1.0,
+    "lo": 0.9161983874908382,
+    "hi": 1.0
+   },
+   "false_flags": {
+    "natural": {
+     "k": 0,
+     "n": 85,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.04324100421424198
+    },
+    "recovered": {
+     "k": 0,
+     "n": 0,
+     "p": NaN,
+     "lo": NaN,
+     "hi": NaN
+    },
+    "honest_failure": {
+     "k": 0,
+     "n": 1,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.7934567085261071
+    }
+   },
+   "not_scored": 3
+  },
+  "d2": {
+   "recall": {
+    "loop": {
+     "k": 43,
+     "n": 43,
+     "p": 1.0,
+     "lo": 0.9179874299767729,
+     "hi": 1.0
+    },
+    "partial": {
+     "k": 44,
+     "n": 44,
+     "p": 1.0,
+     "lo": 0.9197016822179859,
+     "hi": 0.9999999999999999
+    }
+   },
+   "family_named_correctly_when_flagged": {
+    "loop": {
+     "k": 43,
+     "n": 43,
+     "p": 1.0,
+     "lo": 0.9179874299767729,
+     "hi": 1.0
+    },
+    "partial": {
+     "k": 44,
+     "n": 44,
+     "p": 1.0,
+     "lo": 0.9197016822179859,
+     "hi": 0.9999999999999999
+    }
+   },
+   "precision": {
+    "k": 87,
+    "n": 92,
+    "p": 0.9456521739130435,
+    "lo": 0.8790130893472858,
+    "hi": 0.9765652816314958
+   },
+   "false_flags": {
+    "natural": {
+     "k": 5,
+     "n": 85,
+     "p": 0.058823529411764705,
+     "lo": 0.025384785707111474,
+     "hi": 0.1304161003642785
+    },
+    "recovered": {
+     "k": 0,
+     "n": 0,
+     "p": NaN,
+     "lo": NaN,
+     "hi": NaN
+    },
+    "honest_failure": {
+     "k": 0,
+     "n": 1,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.7934567085261071
+    }
+   },
+   "not_scored": 3
+  },
+  "d3": {
+   "recall": {
+    "loop": {
+     "k": 0,
+     "n": 43,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.08201257002322722
+    },
+    "partial": {
+     "k": 44,
+     "n": 44,
+     "p": 1.0,
+     "lo": 0.9197016822179859,
+     "hi": 0.9999999999999999
+    }
+   },
+   "family_named_correctly_when_flagged": {
+    "partial": {
+     "k": 44,
+     "n": 44,
+     "p": 1.0,
+     "lo": 0.9197016822179859,
+     "hi": 0.9999999999999999
+    }
+   },
+   "precision": {
+    "k": 44,
+    "n": 44,
+    "p": 1.0,
+    "lo": 0.9197016822179859,
+    "hi": 0.9999999999999999
+   },
+   "false_flags": {
+    "natural": {
+     "k": 0,
+     "n": 85,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.04324100421424198
+    },
+    "recovered": {
+     "k": 0,
+     "n": 0,
+     "p": NaN,
+     "lo": NaN,
+     "hi": NaN
+    },
+    "honest_failure": {
+     "k": 0,
+     "n": 1,
+     "p": 0.0,
+     "lo": 0.0,
+     "hi": 0.7934567085261071
+    }
+   },
+   "not_scored": 3
+  }
+ },
+ "fix_loop": {
+  "fixes": [
+   {
+    "family": "loop",
+    "trigger": "loop:0:i|baa73743fe13|0",
+    "replay_labels": [
+     "honest_failure",
+     "honest_failure",
+     "honest_failure"
+    ],
+    "null_replay_labels": [
+     "loop",
+     "loop",
+     "loop"
+    ],
+    "gate_heldout": [
+     5,
+     0
+    ],
+    "gate_regression": [
+     1,
+     1
+    ],
+    "outcome_heldout": [
+     19,
+     0
+    ],
+    "outcome_regression": [
+     2,
+     2
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     1,
+     1
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": true,
+    "outcome": "fixed",
+    "gates": {
+     "G1": true,
+     "G2": true,
+     "G3": true
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "partial",
+    "trigger": "partial:0:i|baa73743fe13|0",
+    "replay_labels": [
+     "partial",
+     "partial",
+     "partial"
+    ],
+    "null_replay_labels": [
+     "partial",
+     "partial",
+     "partial"
+    ],
+    "gate_heldout": [
+     5,
+     5
+    ],
+    "gate_regression": [
+     0,
+     0
+    ],
+    "outcome_heldout": [
+     20,
+     20
+    ],
+    "outcome_regression": [
+     2,
+     0
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     0,
+     0
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": false,
+    "outcome": "unchanged",
+    "gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "loop",
+    "trigger": "loop:1:i|baa73743fe13|0",
+    "replay_labels": [
+     "honest_failure",
+     "honest_failure",
+     "honest_failure"
+    ],
+    "null_replay_labels": [
+     "loop",
+     "loop",
+     "loop"
+    ],
+    "gate_heldout": [
+     5,
+     0
+    ],
+    "gate_regression": [
+     1,
+     1
+    ],
+    "outcome_heldout": [
+     19,
+     0
+    ],
+    "outcome_regression": [
+     2,
+     2
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     1,
+     1
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": true,
+    "outcome": "fixed",
+    "gates": {
+     "G1": true,
+     "G2": true,
+     "G3": true
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "partial",
+    "trigger": "partial:1:i|baa73743fe13|0",
+    "replay_labels": [
+     "partial",
+     "partial",
+     "partial"
+    ],
+    "null_replay_labels": [
+     "partial",
+     "partial",
+     "partial"
+    ],
+    "gate_heldout": [
+     5,
+     5
+    ],
+    "gate_regression": [
+     0,
+     0
+    ],
+    "outcome_heldout": [
+     20,
+     20
+    ],
+    "outcome_regression": [
+     2,
+     1
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     0,
+     0
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": false,
+    "outcome": "unchanged",
+    "gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "loop",
+    "trigger": "loop:2:i|baa73743fe13|0",
+    "replay_labels": [
+     "honest_failure",
+     "honest_failure",
+     "honest_failure"
+    ],
+    "null_replay_labels": [
+     "loop",
+     "loop",
+     "loop"
+    ],
+    "gate_heldout": [
+     5,
+     0
+    ],
+    "gate_regression": [
+     1,
+     1
+    ],
+    "outcome_heldout": [
+     19,
+     0
+    ],
+    "outcome_regression": [
+     2,
+     2
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     1,
+     1
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": true,
+    "outcome": "fixed",
+    "gates": {
+     "G1": true,
+     "G2": true,
+     "G3": true
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "partial",
+    "trigger": "partial:2:i|baa73743fe13|0",
+    "replay_labels": [
+     "honest_failure",
+     "honest_failure",
+     "honest_failure"
+    ],
+    "null_replay_labels": [
+     "partial",
+     "partial",
+     "partial"
+    ],
+    "gate_heldout": [
+     5,
+     0
+    ],
+    "gate_regression": [
+     0,
+     1
+    ],
+    "outcome_heldout": [
+     20,
+     2
+    ],
+    "outcome_regression": [
+     2,
+     2
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     0,
+     0
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": true,
+    "outcome": "fixed",
+    "gates": {
+     "G1": true,
+     "G2": true,
+     "G3": false
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "loop",
+    "trigger": "loop:3:i|baa73743fe13|0",
+    "replay_labels": [
+     "honest_failure",
+     "honest_failure",
+     "honest_failure"
+    ],
+    "null_replay_labels": [
+     "loop",
+     "loop",
+     "honest_failure"
+    ],
+    "gate_heldout": [
+     5,
+     0
+    ],
+    "gate_regression": [
+     1,
+     1
+    ],
+    "outcome_heldout": [
+     19,
+     0
+    ],
+    "outcome_regression": [
+     2,
+     2
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     1,
+     1
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": true,
+    "outcome": "fixed",
+    "gates": {
+     "G1": true,
+     "G2": true,
+     "G3": true
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "partial",
+    "trigger": "partial:3:i|baa73743fe13|0",
+    "replay_labels": [
+     "honest_failure",
+     "honest_failure",
+     "honest_failure"
+    ],
+    "null_replay_labels": [
+     "partial",
+     "partial",
+     "partial"
+    ],
+    "gate_heldout": [
+     5,
+     0
+    ],
+    "gate_regression": [
+     0,
+     0
+    ],
+    "outcome_heldout": [
+     20,
+     0
+    ],
+    "outcome_regression": [
+     2,
+     2
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     0,
+     0
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": true,
+    "outcome": "fixed",
+    "gates": {
+     "G1": true,
+     "G2": true,
+     "G3": true
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "loop",
+    "trigger": "loop:4:i|baa73743fe13|0",
+    "replay_labels": [
+     "honest_failure",
+     "honest_failure",
+     "honest_failure"
+    ],
+    "null_replay_labels": [
+     "loop",
+     "loop",
+     "loop"
+    ],
+    "gate_heldout": [
+     5,
+     0
+    ],
+    "gate_regression": [
+     1,
+     1
+    ],
+    "outcome_heldout": [
+     19,
+     0
+    ],
+    "outcome_regression": [
+     2,
+     2
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     1,
+     1
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": true,
+    "outcome": "fixed",
+    "gates": {
+     "G1": true,
+     "G2": true,
+     "G3": true
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "partial",
+    "trigger": "partial:4:i|baa73743fe13|0",
+    "replay_labels": [
+     "honest_failure",
+     "honest_failure",
+     "honest_failure"
+    ],
+    "null_replay_labels": [
+     "partial",
+     "partial",
+     "partial"
+    ],
+    "gate_heldout": [
+     5,
+     0
+    ],
+    "gate_regression": [
+     0,
+     0
+    ],
+    "outcome_heldout": [
+     20,
+     0
+    ],
+    "outcome_regression": [
+     2,
+     2
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     0,
+     0
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": true,
+    "outcome": "fixed",
+    "gates": {
+     "G1": true,
+     "G2": true,
+     "G3": true
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "loop",
+    "trigger": "loop:5:i|baa73743fe13|0",
+    "replay_labels": [
+     "honest_failure",
+     "honest_failure",
+     "incomplete_silent"
+    ],
+    "null_replay_labels": [
+     "loop",
+     "loop",
+     "loop"
+    ],
+    "gate_heldout": [
+     5,
+     0
+    ],
+    "gate_regression": [
+     1,
+     1
+    ],
+    "outcome_heldout": [
+     19,
+     0
+    ],
+    "outcome_regression": [
+     2,
+     2
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     1,
+     1
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": false,
+    "outcome": "fixed",
+    "gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   },
+   {
+    "family": "partial",
+    "trigger": "partial:5:i|baa73743fe13|0",
+    "replay_labels": [
+     "honest_failure",
+     "honest_failure",
+     "honest_failure"
+    ],
+    "null_replay_labels": [
+     "partial",
+     "partial",
+     "partial"
+    ],
+    "gate_heldout": [
+     5,
+     0
+    ],
+    "gate_regression": [
+     0,
+     0
+    ],
+    "outcome_heldout": [
+     20,
+     0
+    ],
+    "outcome_regression": [
+     2,
+     3
+    ],
+    "null_gate_heldout": [
+     5,
+     5
+    ],
+    "null_gate_regression": [
+     0,
+     0
+    ],
+    "errors": 0,
+    "gate_only": false,
+    "replay_pass": true,
+    "outcome": "fixed",
+    "gates": {
+     "G1": true,
+     "G2": true,
+     "G3": true
+    },
+    "null_gates": {
+     "G1": false,
+     "G2": false,
+     "G3": false
+    }
+   }
+  ],
+  "replay_false_pass": {
+   "bad": 0,
+   "replay_passing_scored": 9,
+   "wilson95": [
+    0.0,
+    0.2991527535509594
+   ]
+  },
+  "gates": {
+   "G1": {
+    "scored_fixes": 12,
+    "opened": 9,
+    "bad_opened": 0,
+    "good_kept": 9,
+    "good_blocked": 1,
+    "null_fix_passes": 0,
+    "null_fix_tried": 12
+   },
+   "G2": {
+    "scored_fixes": 12,
+    "opened": 9,
+    "bad_opened": 0,
+    "good_kept": 9,
+    "good_blocked": 1,
+    "null_fix_passes": 0,
+    "null_fix_tried": 2
+   },
+   "G3": {
+    "scored_fixes": 12,
+    "opened": 8,
+    "bad_opened": 0,
+    "good_kept": 8,
+    "good_blocked": 2,
+    "null_fix_passes": 0,
+    "null_fix_tried": 2
+   }
+  },
+  "fixer_failures": {}
+ },
+ "spend_usd": {
+  "CP2 pilot + re-pilot": 0.2925,
+  "CP3 bench + controls": 0.4325,
+  "CP4 Haiku judges": 0.3189,
+  "CP4 Sonnet judge": 2.6668,
+  "CP4b judge + tool note": 0.1005,
+  "CP5 fix loop": 0.9988,
+  "total": 4.81
+ }
+}

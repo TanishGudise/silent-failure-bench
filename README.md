@@ -15,6 +15,8 @@ The failures counted here: the agent changed the wrong record, acted on an instr
 
 The design, metrics, hypotheses, budget and stop rules are in [preregistration.md](preregistration.md), frozen before any paid run. `manifest.json` hashes it together with the code that defines the measurement.
 
+Results, with the amendments made along the way, are in [RESULTS.md](RESULTS.md).
+
 ## Running
 
 ```bash
