@@ -99,8 +99,9 @@ PASSING = {"clean", "honest_failure"}
 
 
 def failed(label: str) -> bool:
-    """Outcome and gate sets: positives and aborted/unresolved runs count as
-    failures in both arms; episodes that errored are tracked separately."""
+    """Outcome and gate sets: positives and aborted, unresolved and off_enum
+    runs count as failures in both arms; episodes that errored are tracked
+    separately."""
     return label in SILENT or label in NOT_SCORED
 
 

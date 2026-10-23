@@ -162,9 +162,10 @@ class Stopper:
 
 def run_episodes(store: Store, jobs: Iterable[tuple[Task, AgentConfig, int]], gateway: str,
                  run: str, workers: int, manifest_hash: str,
-                 retry_errors: bool = False) -> list[dict[str, Any]]:
+                 retry_errors: bool = False, stopper: Stopper | None = None) -> list[dict[str, Any]]:
+    """stopper: shared across batches, so errors in a row are counted across them."""
     model = model_for(gateway, run)
-    stopper = Stopper()
+    stopper = stopper or Stopper()
     todo = []
     retried = []
     for task, config, rep in jobs:
@@ -204,6 +205,26 @@ def episode_jobs(families: list[str], seeds: range, variants: list[bool],
                  config: AgentConfig) -> list[tuple[Task, AgentConfig, int]]:
     """Seed-major, so a run stopped at its cap leaves every family with the same seeds."""
     return [(build(f, s, v), config, 0) for s in seeds for f in families for v in variants]
+
+
+def fix_order(triggers: dict[str, list[Any]], per_family: int) -> list[tuple[str, Any]]:
+    """Every family's first trigger before any family's second, so a stop at
+    the cap leaves the families balanced."""
+    return [(family, found[rank]) for rank in range(per_family)
+            for family, found in triggers.items() if rank < len(found)]
+
+
+def pilot_prevalence(rows: list[dict[str, Any]]) -> dict[str, tuple[int, int, bool]]:
+    """Per family in the run: (episodes labeled with the family, scored induced
+    episodes, below 15%). A family with no scored induced episode is below."""
+    out = {}
+    for family in FAMILIES:
+        if not any(r["family"] == family for r in rows):
+            continue
+        sub = [r for r in rows if r["induced"] and r["family"] == family and r["label"] not in NOT_SCORED]
+        hits = sum(r["label"] == family for r in sub)
+        out[family] = (hits, len(sub), not sub or hits / len(sub) < 0.15)
+    return out
 
 
 def seed_major(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -257,7 +278,8 @@ def cmd_smoke(args) -> None:
     Run: one paid episode through the gateway (on a new workspace, its first
     call). Confirm: the console's input and output token counts for the
     workspace, over all dates, must equal the sums over every ledger exactly.
-    The check is blind: the ledger's numbers are never printed before it.
+    A call booked at the bound adds no tokens to the sums, so the console's
+    counts decide it. This command doesn't print the ledger's counts first.
     """
     path = RUNS / "smoke.json"
     saved = json.loads(path.read_text()) if path.exists() else {}
@@ -266,8 +288,8 @@ def cmd_smoke(args) -> None:
     if not args.console_tokens:
         if saved.get("confirmed") and saved.get("gateway_hash") == current_gateway:
             raise SystemExit("the smoke is already confirmed for this workspace and gateway")
-        if not args.gateway:
-            raise SystemExit("--gateway is required to run the smoke episode")
+        if not args.gateway or not args.run:
+            raise SystemExit("--gateway and --run are required to run the smoke episode")
         manifest_hash = preflight(require_smoke=False)
         store = Store(RUNS / args.run / f"smoke_episodes-{current_gateway[:8]}.jsonl")
         # An errored smoke episode is re-run by running `smoke` again (logged).
@@ -279,8 +301,8 @@ def cmd_smoke(args) -> None:
         if "record" not in row:
             raise SystemExit("the smoke episode errored; run `smoke` again to retry it")
         print("Smoke episode done. When the console's Usage page shows it, run `smoke --ledger <every ledger> "
-              "--console-tokens IN,OUT --spend-limit USD` with the workspace's token counts over all dates "
-              "(input = uncached + cache write + cache read).")
+              "--console-tokens IN,OUT --spend-limit USD` (one --ledger per ledger) with the workspace's token "
+              "counts over all dates (input = uncached + cache write + cache read).")
         return
     if not saved:
         raise SystemExit("run the smoke episode first")
@@ -295,14 +317,13 @@ def cmd_smoke(args) -> None:
         problems.append("no requests in the given ledgers")
     if console != (totals["input_tokens"], totals["output_tokens"]):
         problems.append("the console's token counts don't equal the ledgers'")
-    if totals["notes"]:
-        problems.append(f"the gateway booked a bound: {totals['notes']}")
     if args.spend_limit is None or not 0 < args.spend_limit <= TOTAL_BUDGET_USD:
         problems.append(f"record the workspace's console spend limit (0 < limit <= ${TOTAL_BUDGET_USD:.0f})")
     # Every attempt is kept, so a mismatch followed by a retyped match shows.
     saved.setdefault("attempts", []).append({
         "console_tokens": list(console), "ledger_tokens": [totals["input_tokens"], totals["output_tokens"]],
-        "ledgers": [str(p) for p in ledgers], "spend_limit_usd": args.spend_limit,
+        "ledgers": [str(p) for p in ledgers], "gateway_hash": current_gateway, "bound_notes": totals["notes"],
+        "spend_limit_usd": args.spend_limit,
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "problems": problems})
     saved.update({"confirmed": not problems, "spend_limit_usd": args.spend_limit})
     path.write_text(json.dumps(saved, indent=1))
@@ -396,7 +417,7 @@ def cmd_fixloop(args) -> None:
     fixes = Store(RUNS / args.run / "fixes.jsonl")
     baseline = AgentConfig()
     fixer = model_for(args.gateway, args.run + "-fixer")
-    fixer_stopper = Stopper()
+    stopper = Stopper()  # one for the whole loop: fixer calls and every episode batch
     tag = args.run + "-fixloop"
     summary_path = RUNS / args.run / "fixloop_summary.json"
     saved = json.loads(summary_path.read_text()) if summary_path.exists() else {}
@@ -430,13 +451,14 @@ def cmd_fixloop(args) -> None:
                                                           max_tokens=FIXER_MAX_TOKENS)
             except Exception as exc:
                 # Nothing stored, so the next run retries it; a budget or key
-                # refusal, or MAX_ERRORS_IN_A_ROW in a row, stops the loop.
-                fixer_stopper.error(exc)
-                fixer_failures[trig["key"]] = f"call failed: {type(exc).__name__}"
-                print(f"{key}: fixer call failed ({type(exc).__name__}); re-run to retry")
-                fixer_stopper.check("fixes")
+                # refusal (not the fixer's failure), or MAX_ERRORS_IN_A_ROW in a
+                # row, stops the loop.
+                if stopper.error(exc):
+                    fixer_failures[trig["key"]] = f"call failed: {type(exc).__name__}"
+                    print(f"{key}: fixer call failed ({type(exc).__name__}); re-run to retry")
+                stopper.check("fixes")
                 return None
-            fixer_stopper.ok()
+            stopper.ok()
             fixes.add({"key": key, "family": family, "manifest": manifest_hash, "answer": answer,
                        "usage": usage, "stop": stop})
         answer = fixes.rows[key]["answer"]
@@ -455,10 +477,10 @@ def cmd_fixloop(args) -> None:
                 fixloop.regression_tasks(family, outcome_regression)]
         # The family's baseline runs (stored, so later triggers reuse them).
         base_rows = run_episodes(store, [(t, baseline, 0) for tasks in sets for t in tasks],
-                                 args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+                                 args.gateway, tag, args.workers, manifest_hash, args.retry_errors, stopper)
         # The null fix: the unchanged config again (rep 1) on the gate seeds.
         null_gate_rows = run_episodes(store, [(t, baseline, 1) for t in sets[0] + sets[2]],
-                                      args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+                                      args.gateway, tag, args.workers, manifest_hash, args.retry_errors, stopper)
         null_held_fails = sum(fixloop.failed(label_of(r)) for r in null_gate_rows[:len(sets[0])])
         null_reg_fails = sum(fixloop.failed(label_of(r)) for r in null_gate_rows[len(sets[0]):])
         fixed = fixloop.apply_fix(baseline, answer)
@@ -466,11 +488,11 @@ def cmd_fixloop(args) -> None:
         # Fresh re-runs of the trigger: the fixed config, and the unchanged
         # config (reps 1-3; rep 0 is the bench episode that triggered).
         replays = run_episodes(store, [(trigger_task, fixed, rep) for rep in range(fixloop.REPLAYS)],
-                               args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+                               args.gateway, tag, args.workers, manifest_hash, args.retry_errors, stopper)
         nulls = run_episodes(store, [(trigger_task, baseline, rep) for rep in range(1, fixloop.REPLAYS + 1)],
-                             args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+                             args.gateway, tag, args.workers, manifest_hash, args.retry_errors, stopper)
         fix_rows = run_episodes(store, [(t, fixed, 0) for tasks in sets for t in tasks],
-                                args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+                                args.gateway, tag, args.workers, manifest_hash, args.retry_errors, stopper)
         cuts = [0]
         for tasks in sets:
             cuts.append(cuts[-1] + len(tasks))
@@ -494,20 +516,15 @@ def cmd_fixloop(args) -> None:
 
     stopped = None
     try:
-        # Every family's first trigger before any family's second, so a stop at
-        # the cap leaves the families balanced. Each fix is proposed before its
-        # family's baseline runs, so a failing fixer costs only its own calls.
-        for rank in range(args.per_family):
-            for family in families:
-                if rank >= len(triggers[family]):
-                    continue
-                trig = triggers[family][rank]
-                answer = propose(family, trig)
-                if answer is None:
-                    continue
-                result = evaluate(family, trig, answer)
-                results[trig["key"]] = result
-                print(json.dumps(result.record()))
+        # Each fix is proposed before its family's baseline runs, so a failing
+        # fixer costs only its own calls.
+        for family, trig in fix_order(triggers, args.per_family):
+            answer = propose(family, trig)
+            if answer is None:
+                continue
+            result = evaluate(family, trig, answer)
+            results[trig["key"]] = result
+            print(json.dumps(result.record()))
     except BaseException as exc:
         stopped = f"{type(exc).__name__}: {exc}"
         raise
@@ -614,11 +631,14 @@ def cmd_report(args) -> None:
     errored = [k for k, r in Store(RUNS / args.run / "episodes.jsonl").rows.items() if "record" not in r]
     print(json.dumps(prevalence(rows), indent=1))
     print("induced prevalence (primary label = family, of scored induced episodes):")
-    for family in FAMILIES:
-        sub = [r for r in rows if r["induced"] and r["family"] == family and r["label"] not in NOT_SCORED]
-        hits = sum(r["label"] == family for r in sub)
-        low = "  BELOW 15%" if not sub or hits / len(sub) < 0.15 else ""
-        print(f"  {family:14s} {fmt(rate(hits, len(sub)))}{low}")
+    for family, (hits, scored, below) in pilot_prevalence(rows).items():
+        print(f"  {family:14s} {fmt(rate(hits, scored))}{'  BELOW 15%' if below else ''}")
+    smoke_path = RUNS / "smoke.json"
+    if smoke_path.exists():
+        smoke = json.loads(smoke_path.read_text())
+        attempts = smoke.get("attempts", [])
+        print(f"smoke: {'confirmed' if smoke.get('confirmed') else 'NOT confirmed'}; {len(attempts)} attempt(s), "
+              f"{sum(bool(a['problems']) for a in attempts)} with problems")
     print("positives per family (primary label = family, both variants):",
           {f: sum(r["label"] == f for r in rows) for f in FAMILIES})
     print("errored episodes (no label):", len(errored))
@@ -725,7 +745,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("smoke")
-    p.add_argument("--run", required=True)
+    p.add_argument("--run", default="", help="required to run the smoke episode")
     p.add_argument("--gateway", default="")
     p.add_argument("--ledger", action="append", default=[], help="a gateway ledger (confirm: give every one)")
     p.add_argument("--console-tokens", default="", help="IN,OUT for the workspace from the console's Usage page")

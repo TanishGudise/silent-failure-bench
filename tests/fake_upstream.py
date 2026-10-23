@@ -26,6 +26,7 @@ class FakeUpstream:
         self.mode = mode
         self.usage_extra: dict = {}  # merged into every reply's usage
         self.limit_after: int | None = None  # requests after this many get the "limit400" reply
+        self.fail_fixer = False  # fixer requests get the "error400" reply
         self.requests: list[dict] = []
         self.lock = threading.Lock()
         handler = self._handler()
@@ -54,9 +55,12 @@ class FakeUpstream:
                     self.connection.close()
                     return
                 limited = fake.limit_after is not None and len(fake.requests) > fake.limit_after
-                if fake.mode in ("limit400", "error400") or limited:
+                schema = ((body.get("output_config") or {}).get("format") or {}).get("schema") or {}
+                fixer_fails = fake.fail_fixer and "instructions" in schema.get("properties", {})
+                if fake.mode in ("limit400", "error400") or limited or fixer_fails:
+                    kind = "limit400" if limited else "error400" if fixer_fails else fake.mode
                     message = {"limit400": "You have reached your specified workspace API usage limits.",
-                               "error400": "messages: bad request"}["limit400" if limited else fake.mode]
+                               "error400": "messages: bad request"}[kind]
                     data = json.dumps({"type": "error", "error": {"type": "invalid_request_error",
                                                                   "message": message}}).encode()
                     self.send_response(400)

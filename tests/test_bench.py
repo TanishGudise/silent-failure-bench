@@ -306,10 +306,52 @@ def test_a_stopped_fix_loop_still_writes_its_summary(gate_env, monkeypatch):
         server.shutdown()
     summary = json.loads((tmp / "runs/s/fixloop_summary.json").read_text())
     assert "usage or spend limit" in summary["stopped"]
-    assert summary["fixes"] == [] and list(summary["fixer_failures"]) == ["wrong_entity:0:i|" +
-                                                                         AgentConfig().fingerprint + "|0"]
+    # A spend-limit stop isn't the fixer's failure.
+    assert summary["fixes"] == [] and summary["fixer_failures"] == {}
     # The fixer is asked before the family's baseline runs, so nothing else ran.
     assert not (tmp / "runs/s/fixloop_episodes.jsonl").exists()
+
+
+def test_fixer_errors_in_a_row_stop_the_fix_loop(gate_env, monkeypatch):
+    env, upstream, tmp = gate_env
+    server, url = _start(env, upstream, tmp / "spend.jsonl", 2.0)
+    monkeypatch.chdir(tmp)
+    from sfb import run as runner
+    import sys
+
+    try:
+        monkeypatch.setattr(sys, "argv", ["sfb.run", "episodes", "--run", "x", "--gateway", url,
+                                          "--families", "wrong_entity", "--seeds", "0-6", "--variants", "induced"])
+        runner.main()
+        upstream.fail_fixer = True
+        monkeypatch.setattr(sys, "argv", ["sfb.run", "fixloop", "--run", "x", "--gateway", url,
+                                          "--families", "wrong_entity", "--per-family", "7"])
+        with pytest.raises(SystemExit, match="5 errors in a row"):
+            runner.main()
+    finally:
+        server.shutdown()
+    summary = json.loads((tmp / "runs/x/fixloop_summary.json").read_text())
+    assert len(summary["fixer_failures"]) == 5 and "5 errors in a row" in summary["stopped"]
+    assert not (tmp / "runs/x/fixloop_episodes.jsonl").exists()
+
+
+def test_fixes_run_first_triggers_across_families_first():
+    from sfb import run as runner
+
+    order = runner.fix_order({"loop": ["l0", "l1"], "partial": ["p0"], "lost_context": ["c0", "c1"]}, 2)
+    assert order == [("loop", "l0"), ("partial", "p0"), ("lost_context", "c0"),
+                     ("loop", "l1"), ("lost_context", "c1")]
+
+
+def test_prevalence_flags_families_in_the_run_only():
+    from sfb import run as runner
+
+    def rows(family, labels):
+        return [{"family": family, "induced": True, "label": label} for label in labels]
+
+    got = runner.pilot_prevalence(rows("loop", ["aborted", "unresolved"]) + rows("partial", ["partial"] + ["clean"] * 9)
+                                  + rows("lost_context", ["lost_context"] * 2 + ["clean"] * 8))
+    assert got == {"loop": (0, 0, True), "partial": (1, 10, True), "lost_context": (2, 10, False)}
 
 
 def test_key_and_spend_limit_refusals_stop_on_any_4xx():
@@ -435,8 +477,13 @@ def test_smoke_reconciles_ledger_tokens_with_the_console(gate_env, monkeypatch, 
         assert json.loads((tmp / "runs/smoke.json").read_text())["confirmed"] is False
         with pytest.raises(SystemExit):
             smoke("--console-tokens", tokens)  # no spend limit recorded
+        # A call booked at the bound adds no tokens; the console's counts decide it.
+        with open(tmp / "spend.jsonl", "a") as handle:
+            handle.write(json.dumps({"run": "p-smoke", "status": 0, "usage": {}, "usd": 0.001,
+                                     "note": "upstream failed: RemoteDisconnected"}) + "\n")
         saved = smoke("--console-tokens", tokens, "--spend-limit", "20")
         assert saved["confirmed"] is True and len(saved["attempts"]) == 3
+        assert saved["attempts"][-1]["bound_notes"] == ["upstream failed: RemoteDisconnected"]
         # Once confirmed for this gateway, it isn't run again.
         with pytest.raises(SystemExit, match="already confirmed"):
             smoke("--gateway", url)

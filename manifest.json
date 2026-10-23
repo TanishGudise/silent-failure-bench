@@ -1,6 +1,6 @@
 {
  "files": {
-  "preregistration.md": "1872a337c0045ce9e879f8ea891c00cb57c7225bd22df5e0ebd0382511a7e474",
+  "preregistration.md": "232b5564adeb65064d178a885f6814f55c791642e838bb282d0c46a3fa225cf4",
   "pyproject.toml": "d0ee5858bd9bfcabe39da3a2ac2fa170aacff06703a18a18d75df7d5c0f1196c",
   "scripts/gateway.sh": "fef2a9921af57143e0e9af0fbabb84858d6c2a3dbb406397eeb460bca48527b0",
   "scripts/harness.sh": "36be4516825092cd5de5acfde21c4f55a6d69a7709aa6a8bf6048dc38eab9a45",
@@ -11,16 +11,16 @@
   "sfb/analysis.py": "b0f76b3e9ad0b15174557bf83c388dcdb06ea69d84b9f0ae184db5559563d8fc",
   "sfb/detectors.py": "f267e755dce8fc5bd3c8485dc017d67b5ddf38b667c5957ad26fd9dc4e6f248d",
   "sfb/env.py": "b0d155efdb8e0ad57101c16797c30e2f9da3b3b30db79ec2a57231c63799f351",
-  "sfb/fixloop.py": "525a4dbac82e684e9014c0299ab140ea26dc4db9871e9450ad47286d996da84d",
+  "sfb/fixloop.py": "3c90c7c69fecf35238ac082ae524d0b1800f0da00031e37d5a0f52be6cb1a342",
   "sfb/gate.py": "29c61d28a49f523c26c0831ad12e21dbbc3b86509703a039b3d15b12b3b88734",
   "sfb/gateway.py": "ff507bdbf0c593b19788455295c9546d5e64f94b46040f2704987ecacdf1b0aa",
   "sfb/labels.py": "c1e6879c2e96072ca0b450a84c68cb0b8ac28ebf50a2ee503207569810754658",
   "sfb/llm.py": "7776e33d2d8893b2a5b5be91085228191cd5fc26087c9a4060e7cc492afbea7f",
   "sfb/manifest.py": "2371e49fdfb63fcea683bb36a5dd2acb2c7ef7dcbc4f1a3aa22ba0c7bff0a93d",
-  "sfb/run.py": "fdc8f53039ab1f518fad87b5fe6e7318065b5cd60dadd2b452650d54ab6adae0",
+  "sfb/run.py": "fc7630cca27dbe676c8c20e81a1e38dc20b69e961439969070e0b9e251cc3cc9",
   "sfb/scripted.py": "0ee291144680cd54362a9d33728de8cc0cd9ed1fae6e1ead3356b29dbb165c35",
   "sfb/tasks.py": "3ae70144af33eae87bed7ccb1e09b6ede268827160c9a471edff2be957eca922",
   "sfb/world.py": "0be7cf260e466cb9da5131f70c694009067bed61af1a3995ea618d36ecd19f27"
  },
- "manifest_hash": "fbf585b83abab48110b0b835030cd303002f51befaaa071fc7426256d4a85e1f"
+ "manifest_hash": "47c3d662617e49b16ae4d3bb194fd8cbd1035ac7215570b0813e224e717c1be3"
 }
