@@ -245,8 +245,9 @@ def ledger_rows(ledger: Path) -> list[dict[str, Any]]:
 
 
 UNBILLED_NOTES = {"unbilled error reply; retrying", "unbilled error reply"}
-# Bound bookings that would repeat on every call (a premium tier or region, or
-# usage the gateway can't read): the smoke stops on them.
+# Bound bookings whose cause lies with the workspace or the API, not one call
+# (a non-standard tier or non-global region, or usage the gateway can't
+# read): the smoke stops on them.
 PERSISTENT_NOTES = ("unexpected ", "unreadable usage")
 RUN_TAG_SUFFIXES = ("", "-smoke", "-d1", "-d1b", "-fixloop", "-fixer")
 
@@ -282,10 +283,10 @@ def cmd_smoke(args) -> None:
     Run: one paid episode through the gateway (on a new workspace, its first
     call). Confirm: the console's input and output token counts for the
     workspace, over all dates, must equal the sums over every ledger exactly.
-    A call booked at the bound because no usable usage came back adds no
-    tokens to the sums, so the console's counts decide it; a bound booked for a
-    premium tier or region, or unreadable usage, stops the smoke. This command
-    doesn't print the ledger's counts first.
+    A call booked at the bound because no usage came back adds no tokens to
+    the sums, so the console's counts decide it; a bound booked for a
+    non-standard tier or non-global region, or unreadable usage, stops the
+    smoke. This command doesn't print the ledger's counts first.
     """
     path = RUNS / "smoke.json"
     saved = json.loads(path.read_text()) if path.exists() else {}

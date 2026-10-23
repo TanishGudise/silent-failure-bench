@@ -267,6 +267,12 @@ def test_fixloop_end_to_end_against_the_fake(gate_env, monkeypatch):
 
     stoppers = []
     real_run_episodes = runner.run_episodes
+    made = []
+
+    class CountedStopper(runner.Stopper):
+        def __init__(self):
+            super().__init__()
+            made.append(self)
 
     def spy(*args, **kwargs):
         stoppers.append(args[7] if len(args) > 7 else kwargs.get("stopper"))
@@ -280,6 +286,7 @@ def test_fixloop_end_to_end_against_the_fake(gate_env, monkeypatch):
             monkeypatch.setattr(sys, "argv", ["sfb.run", *argv])
             if argv[0] == "fixloop":
                 monkeypatch.setattr(runner, "run_episodes", spy)
+                monkeypatch.setattr(runner, "Stopper", CountedStopper)
             runner.main()
     finally:
         server.shutdown()
@@ -294,7 +301,8 @@ def test_fixloop_end_to_end_against_the_fake(gate_env, monkeypatch):
                      for l in (tmp / "runs/f/fixloop_episodes.jsonl").read_text().splitlines()}
     assert len(fixed_configs) == 2  # baseline and the fixer's config
     # One error count for the whole loop: every batch shares one Stopper.
-    assert len(stoppers) == 5 and stoppers[0] is not None and all(s is stoppers[0] for s in stoppers)
+    assert len(stoppers) == 5 and all(s is stoppers[0] for s in stoppers)
+    assert made == [stoppers[0]]  # the fixer's own, shared with every batch
 
 
 def test_a_stopped_fix_loop_still_writes_its_summary(gate_env, monkeypatch):
@@ -389,6 +397,23 @@ def test_prevalence_flags_families_in_the_run_only():
     assert runner.pilot_prevalence(labeled, ran) == {
         "stale_context": (0, 0, True), "lost_context": (2, 10, False), "loop": (0, 0, True),
         "partial": (1, 10, True)}
+
+
+def test_report_flags_a_family_whose_episodes_all_errored(tmp_path, monkeypatch, capsys):
+    from sfb import run as runner
+    import sys
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "runs/r").mkdir(parents=True)
+    rows = [{"key": f"partial:{s}:i|fp|0", "record": {"family": "partial", "induced": True, "seed": s,
+                                                      "label": "partial" if s < 2 else "clean"}, "trace": {}}
+            for s in range(5)] + [{"key": f"loop:{s}:i|fp|0", "error": "APIConnectionError"} for s in range(5)]
+    (tmp_path / "runs/r/episodes.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    monkeypatch.setattr(sys, "argv", ["sfb.run", "report", "--run", "r"])
+    runner.main()
+    section = capsys.readouterr().out.split("induced prevalence")[1].split("positives per family")[0]
+    assert "  loop           n/a  BELOW 15%" in section
+    assert "  partial        2/5" in section and "wrong_entity" not in section
 
 
 def test_key_and_spend_limit_refusals_stop_on_any_4xx():
@@ -521,7 +546,9 @@ def test_smoke_reconciles_ledger_tokens_with_the_console(gate_env, monkeypatch, 
         # Confirming doesn't need --run.
         monkeypatch.setattr(sys, "argv", ["sfb.run", "smoke", "--ledger", "spend.jsonl",
                                           "--console-tokens", tokens, "--spend-limit", "20"])
+        capsys.readouterr()
         runner.main()
+        assert capsys.readouterr().out.strip() == "SMOKE OK (1 call(s) booked at the bound with no usage)"
         saved = json.loads((tmp / "runs/smoke.json").read_text())
         assert saved["confirmed"] is True and len(saved["attempts"]) == 3
         assert saved["attempts"][-1]["bound_notes"] == ["upstream failed: RemoteDisconnected"]
@@ -538,9 +565,14 @@ def test_smoke_reconciles_ledger_tokens_with_the_console(gate_env, monkeypatch, 
     assert json.loads((tmp / "runs/smoke.json").read_text())["confirmed"] is True
 
 
-def test_the_smoke_stops_on_a_premium_tier(gate_env, monkeypatch):
+@pytest.mark.parametrize("extra,note", [
+    ({"service_tier": "priority"}, "unexpected service tier priority"),
+    ({"inference_geo": "us"}, "unexpected inference_geo us"),
+    ({"cache_read_input_tokens": -1}, "unreadable usage"),
+])
+def test_the_smoke_stops_on_tier_region_and_unreadable_usage(gate_env, monkeypatch, extra, note):
     env, upstream, tmp = gate_env
-    upstream.usage_extra = {"service_tier": "priority"}
+    upstream.usage_extra = extra
     server, url = _start(env, upstream, tmp / "spend.jsonl", 1.0)
     monkeypatch.chdir(tmp)
     from sfb import run as runner
@@ -559,7 +591,7 @@ def test_the_smoke_stops_on_a_premium_tier(gate_env, monkeypatch):
         runner.main()
     saved = json.loads((tmp / "runs/smoke.json").read_text())
     assert saved["confirmed"] is False
-    assert "unexpected service tier priority" in saved["attempts"][-1]["problems"][0]
+    assert note in saved["attempts"][-1]["problems"][0]
 
 
 def test_paid_commands_refuse_until_the_smoke_is_confirmed(tmp_path, monkeypatch):

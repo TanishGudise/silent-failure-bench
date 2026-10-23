@@ -1,6 +1,6 @@
 {
  "files": {
-  "preregistration.md": "dc27320727b5e7577f7ea50618a45053bc576ecc5eda258b43ee2ac64387ce8d",
+  "preregistration.md": "cf1fb44095c764bb4640f6d6fab0a1e8dcdcaec745acc7cd60b9be30ce74da65",
   "pyproject.toml": "d0ee5858bd9bfcabe39da3a2ac2fa170aacff06703a18a18d75df7d5c0f1196c",
   "scripts/gateway.sh": "fef2a9921af57143e0e9af0fbabb84858d6c2a3dbb406397eeb460bca48527b0",
   "scripts/harness.sh": "36be4516825092cd5de5acfde21c4f55a6d69a7709aa6a8bf6048dc38eab9a45",
@@ -17,10 +17,10 @@
   "sfb/labels.py": "c1e6879c2e96072ca0b450a84c68cb0b8ac28ebf50a2ee503207569810754658",
   "sfb/llm.py": "7776e33d2d8893b2a5b5be91085228191cd5fc26087c9a4060e7cc492afbea7f",
   "sfb/manifest.py": "2371e49fdfb63fcea683bb36a5dd2acb2c7ef7dcbc4f1a3aa22ba0c7bff0a93d",
-  "sfb/run.py": "a6d96e1dd55d9cf9bb887d2c29fd2e2e678b433dc9a4368fc5b2bfd2bda522aa",
+  "sfb/run.py": "5487c0a74c9b8b63d9f9f7f1e90f5764872390e603a9f58ab88d5c9a8fb64578",
   "sfb/scripted.py": "0ee291144680cd54362a9d33728de8cc0cd9ed1fae6e1ead3356b29dbb165c35",
   "sfb/tasks.py": "3ae70144af33eae87bed7ccb1e09b6ede268827160c9a471edff2be957eca922",
   "sfb/world.py": "0be7cf260e466cb9da5131f70c694009067bed61af1a3995ea618d36ecd19f27"
  },
- "manifest_hash": "c6ea91fda547d38cfcbb89ff5f9f93c40def949c63d35efb1bea20391a45b401"
+ "manifest_hash": "1645d83d3399a1a65a84d932f8dd5cb4d3f65ce808c15259fcacd7c2dc636027"
 }
