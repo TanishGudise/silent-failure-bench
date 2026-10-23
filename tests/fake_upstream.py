@@ -17,7 +17,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class FakeUpstream:
     """mode: "ok"; "drop" (read the request, close without replying);
-    "overloaded_once" (529 with no usage, then normal replies)."""
+    "overloaded_once" (529 with no usage, then normal replies); "truncate"
+    (a 200 whose body is cut off); "html200" (a 200 that isn't JSON);
+    "error500" (a 500 with no usage)."""
 
     def __init__(self, mode: str = "ok") -> None:
         self.mode = mode
@@ -47,6 +49,16 @@ class FakeUpstream:
                 if fake.mode == "drop":
                     self.close_connection = True
                     self.connection.close()
+                    return
+                if fake.mode in ("truncate", "html200", "error500"):
+                    data = {"truncate": b'{"id": "msg_fake", "usage": {"inp',
+                            "html200": b"<html>gateway</html>",
+                            "error500": b'{"type": "error", "error": {"type": "api_error"}}'}[fake.mode]
+                    self.send_response(500 if fake.mode == "error500" else 200)
+                    self.send_header("content-length", str(5000 if fake.mode == "truncate" else len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    self.close_connection = True
                     return
                 status, reply = 200, fake.respond(body)
                 if fake.mode == "overloaded_once" and first:

@@ -152,8 +152,13 @@ def cmd_episodes(args) -> None:
 
 
 def cmd_detect(args) -> None:
+    from .manifest import compute
+
     wanted = args.detectors.split(",")
-    manifest_hash = preflight() if {"d1", "d1b"} & set(wanted) else ""
+    paid = {"d1", "d1b"} & set(wanted)
+    if paid and not args.gateway:
+        raise SystemExit("--gateway is required for d1/d1b")
+    manifest_hash = preflight() if paid else compute()["manifest_hash"]
     episodes = Store(RUNS / args.run / "episodes.jsonl")
     out = Store(RUNS / args.run / f"detect.jsonl")
     instructions = json.loads((RUNS / args.run / "config.json").read_text())["system_prompt"]
@@ -165,7 +170,7 @@ def cmd_detect(args) -> None:
             return
         for name in wanted:
             key = f"{row['key']}|{name}"
-            if key in out.rows:
+            if key in out.rows and not (args.retry_errors and "error" in out.rows[key]):
                 continue
             payload = row["trace"]
             if name == "d2":
@@ -215,6 +220,9 @@ def cmd_fixloop(args) -> None:
                                            for k, v in r.items() if k in fixloop.FixResult.__dataclass_fields__})
         for r in previous}
 
+    fixer_failures: dict[str, str] = (json.loads(summary_path.read_text()).get("fixer_failures", {})
+                                      if summary_path.exists() else {})
+
     def label_of(row: dict[str, Any]) -> str:
         return row["record"]["label"] if "record" in row else "error"
 
@@ -234,6 +242,11 @@ def cmd_fixloop(args) -> None:
                 fixloop.regression_tasks(family, outcome_regression)]
         base_rows = run_episodes(store, [(t, baseline, 0) for tasks in sets for t in tasks],
                                  args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+        # The null fix: the unchanged config again (rep 1) on the gate seeds.
+        null_gate_rows = run_episodes(store, [(t, baseline, 1) for t in sets[0] + sets[2]],
+                                      args.gateway, tag, args.workers, manifest_hash, args.retry_errors)
+        null_held_fails = sum(fixloop.failed(label_of(r)) for r in null_gate_rows[:len(sets[0])])
+        null_reg_fails = sum(fixloop.failed(label_of(r)) for r in null_gate_rows[len(sets[0]):])
         for trig in triggers:
             key = f"fix|{trig['key']}"
             if key not in fixes.rows:
@@ -244,13 +257,19 @@ def cmd_fixloop(args) -> None:
                 except Exception as exc:
                     if _is_budget_refusal(exc):
                         raise BudgetExhausted("budget cap reached at the fixer call") from exc
-                    answer, usage, stop = None, {}, f"{type(exc).__name__}: {exc}"[:300]
+                    # Transport or API error: nothing stored, so the next run retries it.
+                    print(f"{key}: fixer call failed ({type(exc).__name__}); re-run to retry")
+                    fixer_failures[trig["key"]] = f"call failed: {type(exc).__name__}"
+                    continue
                 fixes.add({"key": key, "family": family, "manifest": manifest_hash, "answer": answer,
                            "usage": usage, "stop": stop})
             answer = fixes.rows[key]["answer"]
             if not answer:
+                # The model's own refusal, cutoff or unparseable answer: a real outcome, reported.
+                fixer_failures[trig["key"]] = f"no usable answer: {fixes.rows[key]['stop']}"
                 print(f"{key}: fixer gave no usable answer ({fixes.rows[key]['stop']})")
                 continue
+            fixer_failures.pop(trig["key"], None)
             fixed = fixloop.apply_fix(baseline, answer)
             trigger_task = build(family, trig["record"]["seed"], True)
             # Fresh re-runs of the trigger: the fixed config, and the unchanged
@@ -268,7 +287,7 @@ def cmd_fixloop(args) -> None:
             def fails(rows, i):
                 return sum(fixloop.failed(label_of(r)) for r in rows[cuts[i]:cuts[i + 1]])
 
-            errors = sum("error" in r for r in replays + nulls + fix_rows + base_rows)
+            errors = sum("error" in r for r in replays + nulls + fix_rows + base_rows + null_gate_rows)
             result = fixloop.FixResult(
                 family=family, trigger=trig["key"],
                 replay_labels=[label_of(r) for r in replays],
@@ -277,6 +296,8 @@ def cmd_fixloop(args) -> None:
                 outcome_heldout=(fails(base_rows, 1), fails(fix_rows, 1)),
                 gate_regression=(fails(base_rows, 2), fails(fix_rows, 2)),
                 outcome_regression=(fails(base_rows, 3), fails(fix_rows, 3)),
+                null_gate_heldout=(fails(base_rows, 0), null_held_fails),
+                null_gate_regression=(fails(base_rows, 2), null_reg_fails),
                 errors=errors, gate_only=args.gate_only,
             )
             results[trig["key"]] = result
@@ -288,6 +309,7 @@ def cmd_fixloop(args) -> None:
         "fixes": [r.record() for r in final],
         "replay_false_pass": {"bad": bad, "replay_passing_scored": passing, "wilson95": [lo, hi]},
         "gates": fixloop.gate_table(final),
+        "fixer_failures": fixer_failures,
     }, indent=1))
 
 
@@ -309,14 +331,29 @@ def load_rows(run: str) -> list[dict[str, Any]]:
     return rows
 
 
-def detector_errors(run: str) -> dict[str, int]:
+def detector_errors(run: str) -> dict[str, dict[str, int]]:
+    """Errored detector calls, per detector and episode family."""
     path = RUNS / run / "detect.jsonl"
-    counts: dict[str, int] = {}
+    counts: dict[str, dict[str, int]] = {}
     if path.exists():
         for row in Store(path).rows.values():
             if "error" in row:
-                counts[row["detector"]] = counts.get(row["detector"], 0) + 1
+                family = row["episode"].split(":", 1)[0]
+                per = counts.setdefault(row["detector"], {})
+                per[family] = per.get(family, 0) + 1
     return counts
+
+
+def union(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """D2 or D3 flags: the $0 detectors together, for H1."""
+    out = []
+    for r in rows:
+        v = r["verdicts"]
+        if "d2" in v and "d3" in v:
+            pick = v["d2"] if v["d2"]["flag"] else v["d3"]
+            out.append({**r, "verdicts": {"d2|d3": {"flag": v["d2"]["flag"] or v["d3"]["flag"],
+                                                     "family": pick.get("family")}}})
+    return out
 
 
 def cost_per_1k(ledger: Path, run: str, detector: str, traces: int) -> float | None:
@@ -343,11 +380,14 @@ def cascade(rows: list[dict[str, Any]], judge: str) -> list[dict[str, Any]]:
 
 def cmd_report(args) -> None:
     rows = load_rows(args.run)
+    errored = [k for k, r in Store(RUNS / args.run / "episodes.jsonl").rows.items() if "record" not in r]
     print(json.dumps(prevalence(rows), indent=1))
-    print("detector errors (excluded from the tables below):", detector_errors(args.run))
+    print("errored episodes (no label):", len(errored))
+    print("detector errors by family (excluded from the tables below):", detector_errors(args.run))
     for slice_name, sub in (("induced", [r for r in rows if r["induced"]]),
                             ("natural", [r for r in rows if not r["induced"]])):
         tables = {det: detector_table(sub, det) for det in ("d1", "d1b", "d2", "d3")}
+        tables["d2|d3"] = detector_table(union(sub), "d2|d3")
         for judge in ("d1", "d1b"):
             casc = cascade(sub, judge)
             if casc:
@@ -362,6 +402,9 @@ def cmd_report(args) -> None:
             for fam, r in table["recall"].items():
                 print(f"  recall {fam:18s} {fmt(r)}")
             print(f"  precision            {fmt(table['precision'])}")
+            for fam, r in table["family_named_correctly_when_flagged"].items():
+                print(f"  named right {fam:13s} {fmt(r)}")
+            print(f"  not scored (aborted/unresolved): {table['not_scored']}")
             for k, r in table["false_flags"].items():
                 print(f"  false flags {k:9s} {fmt(r)}")
             if "judge_calls_share" in table:
@@ -439,6 +482,7 @@ def main() -> None:
     p.add_argument("--gateway", default="")
     p.add_argument("--detectors", default="d2,d3")
     p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--retry-errors", action="store_true", help="re-run detector calls that errored (logged)")
     p.set_defaults(fn=cmd_detect)
     p = sub.add_parser("fixloop")
     p.add_argument("--run", required=True)

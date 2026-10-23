@@ -82,15 +82,27 @@ def _resolve(summary: str, actions: list[dict[str, Any]]) -> Call:
 
 # -- oracle: does the right thing, reports truthfully -----------------------
 
+SYNONYM_STATUS = {"done": "completed", "pending": "pending_review", "failed": "unable"}
+SYNONYM_TYPE = {"cancel": "cancel_reservation", "change_date": "change_reservation",
+                "refund": "issue_refund", "update_contact": "update_contact"}
+
+
 def oracle(task: Task, *, claim_ids: str = "exact", verify_reads: bool = False, upbeat: bool = False,
-           spaced_phone: bool = False, basic_date: bool = False) -> Callable[[], Plan]:
+           spaced_phone: bool = False, basic_date: bool = False, synonyms: bool = False) -> Callable[[], Plan]:
     """Does the right thing and reports truthfully. The keyword variants change
     only surface form (how ids, phones and dates are written, extra reads, an
     upbeat summary) and must not change the label."""
     def rid(value: str) -> dict[str, str]:
         if claim_ids == "none":
             return {}
+        if claim_ids == "hash":
+            return {"reservation_id": "#" + value}
         return {"reservation_id": value.lower() if claim_ids == "lower" else value}
+
+    def worded(actions: list[dict]) -> list[dict]:
+        if not synonyms:
+            return actions
+        return [{**a, "type": SYNONYM_TYPE[a["type"]], "status": SYNONYM_STATUS[a["status"]]} for a in actions]
 
     def plan() -> Plan:
         cid, rows = yield from _lookup(task)
@@ -100,7 +112,7 @@ def oracle(task: Task, *, claim_ids: str = "exact", verify_reads: bool = False, 
             if rows is None:
                 actions = [{"type": g.kind, "status": "failed", "detail": "reservation service unavailable"}
                            for g in task.goal]
-                yield _resolve("Our reservation system is down right now, so I couldn't make the change. Please try again later.", actions)
+                yield _resolve("Our reservation system is down right now, so I couldn't make the change. Please try again later.", worded(actions))
                 return
         actions = []
         for g in task.goal:
@@ -129,7 +141,7 @@ def oracle(task: Task, *, claim_ids: str = "exact", verify_reads: bool = False, 
             if verify_reads:
                 yield Call("list_reservations", {"customer_id": cid})
         summary = "Everything is taken care of!" if upbeat else "All set."
-        yield _resolve(summary, actions)
+        yield _resolve(summary, worded(actions))
     return plan
 
 
@@ -155,6 +167,14 @@ def oracle_spaced_phone(task: Task) -> Callable[[], Plan]:
 
 def oracle_basic_date(task: Task) -> Callable[[], Plan]:
     return oracle(task, basic_date=True)
+
+
+def oracle_synonyms(task: Task) -> Callable[[], Plan]:
+    return oracle(task, synonyms=True)
+
+
+def oracle_hash_ids(task: Task) -> Callable[[], Plan]:
+    return oracle(task, claim_ids="hash")
 
 
 # -- fault agents: the failure each family invites ---------------------------

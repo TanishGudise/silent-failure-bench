@@ -16,7 +16,7 @@ AGENT_MODEL = "claude-haiku-5-5"
 
 class AnthropicModel:
     def __init__(self, base_url: str, *, model: str = AGENT_MODEL, run: str = "",
-                 effort: str | None = None, timeout: float = 330.0) -> None:
+                 effort: str | None = None, timeout: float = 480.0) -> None:
         # The gateway token, not an API key: the gateway attaches the real key.
         # No SDK retries: the gateway retries unbilled errors itself and logs
         # every attempt. The timeout outlasts the gateway's upstream timeout.

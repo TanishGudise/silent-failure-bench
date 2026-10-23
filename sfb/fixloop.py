@@ -114,7 +114,9 @@ class FixResult:
     gate_regression: tuple[int, int]
     outcome_heldout: tuple[int, int]
     outcome_regression: tuple[int, int]
-    errors: int = 0                    # errored episodes in this fix's sets, either arm
+    null_gate_heldout: tuple[int, int] = (0, 0)     # (baseline rep 0 fails, baseline rep 1 fails)
+    null_gate_regression: tuple[int, int] = (0, 0)
+    errors: int = 0                    # errored episodes anywhere in this fix's runs, either arm
     gate_only: bool = False
 
     @staticmethod
@@ -147,9 +149,9 @@ class FixResult:
 
     def gate(self, name: str, *, null: bool = False) -> bool:
         g1 = self.null_replay_pass if null else self.replay_pass
-        held, reg = self.gate_heldout, self.gate_regression
-        if null:  # the unchanged config scores exactly the baseline on the gate seeds
-            held, reg = (held[0], held[0]), (reg[0], reg[0])
+        # The null fix is the unchanged config run again (rep 1) on the gate seeds.
+        held, reg = ((self.null_gate_heldout, self.null_gate_regression) if null
+                     else (self.gate_heldout, self.gate_regression))
         g2 = g1 and held[1] < held[0]
         g3 = g2 and reg[1] <= reg[0]
         return {"G1": g1, "G2": g2, "G3": g3}[name]

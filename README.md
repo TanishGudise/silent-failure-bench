@@ -2,12 +2,12 @@
 
 Exactly labeled silent failures in a tool-using agent's traces, three ways to detect them, and a test of whether a fix that passes on the trace that triggered it holds up on new cases.
 
-A silent failure is one the user wouldn't learn about from the agent's reply: it changed the wrong record, acted on an instruction the user had corrected, ignored how the user asked for something to be done, retried the same call over and over, said something was done that wasn't, or left part of a request undone without saying so.
+The failures counted here: the agent changed the wrong record, acted on an instruction the user had corrected, ignored how the user asked for something to be done, retried the same call over and over, reported something done that wasn't, or left part of a request undone without reporting it. What the agent reported is read from the ticket's action list, which the user sees; most of these failures are ones the user wouldn't catch.
 
 ## How it works
 
 - **Environment.** A seeded support desk for a fictional airline: customers, reservations, refunds and eight tools. A scripted customer opens each conversation, so every task is reproducible (model replies still vary from run to run).
-- **Failures are induced, labels are exact.** Natural silent failures from a capable model are rare, so each failure family has a condition that makes it likely (a near-duplicate reservation, a corrected date, a tool that queues instead of acting, and so on). Every episode is then labeled from the final state of the world, the environment's own call log and the ticket's action list, which is what the customer sees. No model is involved in labeling. An episode where the agent meets the condition and recovers is labeled clean.
+- **Failures are induced, labels are exact.** Natural silent failures from a capable model are rare, so each failure family has a condition that makes it likely (a near-duplicate reservation, a corrected date, a tool that queues instead of acting, and so on). Every episode is then labeled from the final state of the world, the environment's own call log and the ticket's action list, which is what the customer sees. No model is involved in labeling. An episode where the agent meets the condition and recovers is labeled clean, or honest_failure when the condition makes the request impossible and the agent reports that.
 - **Natural slice.** The same tasks and seeds are also run without the condition, and reported separately.
 - **Traces.** Episodes are traced with a vendor tracing SDK (MIT, pinned in `pyproject.toml`) and captured locally through its transport hook, so detectors see production-format traces. Nothing is sent anywhere.
 - **Detectors.** An LLM judge, a set of LLM behavior checks, deterministic trace rules, and a probe that re-reads the records the agent claims to have changed.

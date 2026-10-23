@@ -5,10 +5,11 @@ process allowed to reach the upstream API. Before forwarding it reserves the
 request's worst case (every request byte counted as an input token, plus
 max_tokens of output) and refuses any request that could push spend past the
 cap. After the response it books the real cost from `usage` and releases the
-reservation. If the upstream connection fails after the request was sent, it
-books the full reservation, since the call may have been billed. Error replies
-without usage (429, 5xx) aren't billed; those are retried here, at most twice,
-and every attempt is written to the ledger. The key is read from a gitignored
+reservation. If anything goes wrong after the request was sent (the
+connection drops, the body is cut off or unreadable, a success reply has no
+usage, or a 500/502/504 arrives), it books the full reservation, since the
+call may have been billed. Only 429, 503 and 529 replies, which aren't billed,
+are retried here, at most twice, and every attempt is written to the ledger. The key is read from a gitignored
 .env and never logged. Callers must present the gateway token, and only the
 request fields the harness uses are forwarded.
 """
@@ -27,7 +28,11 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-# USD per million tokens: (input, output, input above the long-prompt threshold, output above it)
+# USD per million tokens: (input, output, input above the long-prompt threshold, output above it).
+# Source: Anthropic model pricing as listed in the claude-api skill's model table
+# (cached 2026-10-06): Haiku 5.5 $0.10/$0.50 for prompts up to 100K tokens,
+# $0.50/$2.50 beyond; Sonnet 5.5 $2/$10. Re-check before each paid checkpoint,
+# and keep a spend limit on the API key in the console as a backstop.
 PRICES = {
     "claude-haiku-5-5": (0.10, 0.50, 0.50, 2.50),
     "claude-sonnet-5-5": (2.00, 10.00, 2.00, 10.00),
@@ -36,9 +41,9 @@ LONG_PROMPT_TOKENS = 100_000
 CACHE_WRITE, CACHE_READ = 1.25, 0.10
 ALLOWED_FIELDS = {"model", "max_tokens", "system", "messages", "tools", "output_config",
                   "tool_choice", "stop_sequences", "metadata"}
-RETRY_STATUSES = {429, 500, 502, 503, 529}
+RETRY_STATUSES = {429, 503, 529}
 RETRY_DELAYS = (1.0, 4.0)
-UPSTREAM_TIMEOUT = 300
+UPSTREAM_TIMEOUT = 140  # per attempt; three attempts plus delays stay under the client's 480 s
 
 
 def read_env_key(path: Path) -> str:
@@ -166,24 +171,26 @@ def make_handler(meter: Meter, key: str, upstream: str, token: str):
                             status, payload = resp.status, resp.read()
                     except urllib.error.HTTPError as err:
                         status, payload = err.code, err.read()
-                except OSError as exc:
-                    # The request may have reached the API and been billed.
+                    parsed = json.loads(payload)
+                    usage = (parsed.get("usage") or {}) if isinstance(parsed, dict) else {}
+                except Exception as exc:  # dropped, cut off, unreadable: may have been billed
                     meter.settle(bound, {"ts": round(started, 3), "run": run, "model": model, "status": 0,
                                          "usage": {}, "usd": bound, "note": f"upstream failed: {type(exc).__name__}"})
                     return self._error(502, "api_error", f"upstream failed: {type(exc).__name__}")
-                try:
-                    usage = json.loads(payload).get("usage") or {}
-                except ValueError:
-                    usage = {}
                 last = attempt == len(RETRY_DELAYS)
-                retry = status in RETRY_STATUSES and not usage and not last
-                if retry:
+                if status in RETRY_STATUSES and not usage and not last:
                     meter.book({"ts": round(started, 3), "run": run, "model": model, "status": status,
                                 "usage": {}, "usd": 0.0, "note": "unbilled error reply; retrying"})
                     time.sleep(RETRY_DELAYS[attempt])
                     continue
+                if usage:
+                    usd, note = actual_usd(model, usage), ""
+                elif status < 300 or (status >= 500 and status not in RETRY_STATUSES):
+                    usd, note = bound, "no usage on a reply that may have been billed"
+                else:
+                    usd, note = 0.0, "unbilled error reply"
                 meter.settle(bound, {"ts": round(started, 3), "run": run, "model": model, "status": status,
-                                     "usage": usage, "usd": actual_usd(model, usage) if usage else 0.0})
+                                     "usage": usage, "usd": usd, **({"note": note} if note else {})})
                 return self._reply(status, payload)
 
     return Handler

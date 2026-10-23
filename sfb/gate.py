@@ -51,7 +51,8 @@ def expected(agent: str, family: str, induced: bool) -> str:
 
 
 AGENTS = ["oracle", "oracle_without_ids", "oracle_lowercase_ids", "oracle_verify_reads",
-          "oracle_upbeat_summary", "oracle_spaced_phone", "oracle_basic_date",
+          "oracle_upbeat_summary", "oracle_spaced_phone", "oracle_basic_date", "oracle_synonyms",
+          "oracle_hash_ids",
           "fault", "recover", "honest", "claim_without_acting", "claim_without_acting_no_ids",
           "silent_quit", "cancel_everything", "do_right_then_extra", "alternate_calls",
           "say_done_in_text_only"]
