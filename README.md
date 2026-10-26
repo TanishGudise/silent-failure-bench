@@ -17,10 +17,17 @@ The design, metrics, hypotheses, budget and stop rules are in [preregistration.m
 
 Results are in [RESULTS.md](RESULTS.md); the amendments made along the way are at the end of the pre-registration.
 
+## Reproduce ($0, one command)
+
+```bash
+scripts/repro.sh   # installs into .venv, runs the tests, the 40-seed labeling gate and the manifest check
+```
+
+No API key is needed. The tests run every detector, the gateway and the paid path end to end against a local fake API; the gate checks that scripted agents get exactly the expected labels on 9,760 episodes; the manifest check confirms the code matches the frozen pre-registration. Raw paid-run data (traces, verdicts, ledgers) isn't published; [results/summary.json](results/summary.json) has the aggregates behind [RESULTS.md](RESULTS.md).
+
 ## Running
 
 ```bash
-uv venv --python 3.11 .venv && uv pip install --python .venv/bin/python -e '.[dev]'
 .venv/bin/python -m pytest              # $0: gate, detectors, gateway, end-to-end against a local fake API
 .venv/bin/python -m sfb.gate --seeds 40 # $0: scripted agents must get exactly the expected labels
 .venv/bin/python -m sfb.run sizes       # $0: trace size against number of model calls
@@ -39,3 +46,5 @@ scripts/harness.sh report --run pilot --ledger runs/pilot/spend.jsonl   # spend 
 ```
 
 The harness can reach only loopback. The gateway can reach only the API host.
+
+MIT licensed; see [LICENSE](LICENSE).
